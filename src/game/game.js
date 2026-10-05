@@ -196,13 +196,13 @@ export class Game {
   // ------------------------------------------------------------------
   _spawnTitleDog() {
     const dog = new Dog({ breedKey: 'sheepdog', seed: 7, cutKey: 'teddy', name: 'Biscuit' });
-    dog.place(0.15, 0, -0.2, -0.25);
+    dog.place(0.4, 0, -0.75, -0.35);
     dog.growFur(this.furMaterial);
     dog.windAt = this.tools.windAt;
     this.scene.add(dog.group);
     this.dog = dog;
-    this.player.pos.set(-0.2, 0, 1.4);
-    this.player.face(new THREE.Vector3(0.2, 0.75, -2.2), 0);
+    this.player.pos.set(-0.45, 0, 1.5);
+    this.player.face(new THREE.Vector3(-1.0, 0.45, -2.2), 0);
     this.titleYaw = this.player.yaw;
   }
 

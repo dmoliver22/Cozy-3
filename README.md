@@ -71,5 +71,8 @@ src/
   audio/     all sound is synthesised with WebAudio (no sample files)
 ```
 
+`npm run smoke` plays one whole appointment headlessly against the production build and fails on any
+page error (needs Playwright: `npm i -D playwright && npx playwright install chromium`).
+
 `window.__suds` exposes a few debug helpers (`lab('poodle', 'table')`, `wash()`, `dry()`, `clip()`,
 `stats()`), which is how the smoke tests drive the simulation.
