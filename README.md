@@ -41,7 +41,20 @@ npm run dev        # http://localhost:5173
 | B | Salon catalogue (upgrades) |
 | Esc | Tea break |
 
-Touch screens get a stick, look-drag and buttons.
+### On a phone or tablet
+
+| Touch | Action |
+| --- | --- |
+| Finger on the dog | Use the tool right there: rub to scrub, stroke to brush, sweep to clip, hold to spray or dry |
+| Drag anywhere else | Look around (a second finger can look while the first one grooms) |
+| Tool bar | Pick a tool |
+| Gear button | Tool option |
+| Turn buttons, crouch button | Turn the dog, crouch for bellies and paws |
+| Stick | Walk (optional: the view glides to the tub, table and lobby by itself) |
+| Tap things | Treat jar, service bell, radio, catalogue; the coin chip opens the catalogue too |
+
+Phones get a lighter quality tier (fewer but puffier fur strands, smaller shadows, less rain), the
+render resolution adapts to keep the frame rate up, and Android phones buzz on clips, mats and photos.
 
 ### The loop
 

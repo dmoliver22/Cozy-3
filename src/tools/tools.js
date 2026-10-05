@@ -320,13 +320,14 @@ export class Tools {
 
   _optionLabel() {
     let label = '';
+    const how = this.game.input.touchMode ? 'gear to change' : 'R to change';
     if (this.id === 'clippers') {
       const gd = GUARDS[this.guard];
-      label = `Guard #${gd.n} · ${Math.round(gd.len * 100)} cm  (R to change)`;
-    } else if (this.id === 'bow') label = `${BOW_COLORS[this.bowColor].name} ribbon  (R to change)`;
-    else if (this.id === 'spray') label = `${this.sprayMode ? 'Gentle shower' : 'Jet stream'}  (R to change)`;
-    else if (this.id === 'dryer') label = `${this.dryerHigh ? 'High' : 'Low'} power  (R to change)`;
-    else if (this.id === 'shampoo') label = `${SCENTS[this.scent].name}  (R to change)`;
+      label = `Guard #${gd.n} · ${Math.round(gd.len * 100)} cm  (${how})`;
+    } else if (this.id === 'bow') label = `${BOW_COLORS[this.bowColor].name} ribbon  (${how})`;
+    else if (this.id === 'spray') label = `${this.sprayMode ? 'Gentle shower' : 'Jet stream'}  (${how})`;
+    else if (this.id === 'dryer') label = `${this.dryerHigh ? 'High' : 'Low'} power  (${how})`;
+    else if (this.id === 'shampoo') label = `${SCENTS[this.scent].name}  (${how})`;
     this.game.hud.setGuard(label);
     if (this.id === 'clippers') this.models.clippers.guard.scale.y = 0.6 + this.guard * 0.25;
   }
@@ -366,6 +367,9 @@ export class Tools {
     this.target.copy(origin).addScaledVector(dir, hit ? hit.t : 2.5);
 
     // ---------- Viewmodel physics ----------
+    // Keep the held tool inside narrow (portrait) views.
+    const tanV = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
+    this.rest.set(Math.min(0.22, tanV * this.camera.aspect * 0.45 * 0.62), -Math.min(0.2, tanV * 0.45 * 0.6), -0.45);
     const m = this.current;
     const reaching = m.reach && use && reachable;
     if (reaching) {
@@ -467,7 +471,7 @@ export class Tools {
                 this.faceTimer = 0;
                 dog.upset(0.03);
                 dog.flinchYaw = (Math.random() < 0.5 ? -1 : 1) * 0.6;
-                this.hint = 'Not in the face! Try the gentle shower (R)';
+                this.hint = `Not in the face! Try the gentle shower (${g.optKey})`;
               }
             }
           }
@@ -519,7 +523,7 @@ export class Tools {
                   dog.flinchYaw = (Math.random() < 0.5 ? -1 : 1) * 0.5;
                   dog.upset(0.005 * g.dogFear.dryer);
                   g.maybeSneeze(dog);
-                  this.hint = 'Easy on the face. Low power (R) is gentler';
+                  this.hint = `Easy on the face. Low power (${g.optKey}) is gentler`;
                 }
               }
             }
@@ -554,6 +558,7 @@ export class Tools {
           const cuts = dog.fur.clip(hit.point.x, hit.point.y, hit.point.z, up.whisper ? 0.065 : 0.05, guard);
           if (cuts.length) {
             clipLevel = 0.9;
+            g.buzz(12);
             this.snipAcc += cuts.length;
             for (const c of cuts) {
               this.tuftAcc += 0.5 + c.amount;

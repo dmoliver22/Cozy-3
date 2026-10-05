@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { clamp01, smoothstep, fbm3, mulberry32 } from '../core/math.js';
 import { SpatialHash } from '../core/spatialHash.js';
+import { QUALITY } from '../core/quality.js';
 
 // Every strand is a root on the skeleton plus K verlet particles.
 // Strands are pulled toward a groomed rest shape (stiffness depends on how wet/fluffy they are),
@@ -135,7 +136,8 @@ export class Fur {
       this.phase[s] = rng() * Math.PI * 2;
       this.natLen[s] = d.len;
       this.len[s] = d.len;
-      this.puff[s] = fb.puff * (0.85 + rng() * 0.3) * (d.region === REGION.face ? 0.75 : 1);
+      // Fewer strands on phones are drawn a little puffier so the coat stays full.
+      this.puff[s] = (fb.puff / Math.sqrt(QUALITY.fur)) * (0.85 + rng() * 0.3) * (d.region === REGION.face ? 0.75 : 1);
       this.region[s] = d.region;
       this.color.set(d.col, s * 3);
 

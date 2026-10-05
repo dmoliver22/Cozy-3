@@ -37,7 +37,7 @@ export class Input {
 
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     canvas.addEventListener('mousedown', (e) => {
-      if (!this.enabled || this.touchMode) return;
+      if (!this.enabled || this.touchMode || e.sourceCapabilities?.firesTouchEvents) return;
       if (!this.locked && !this.lockFailed && e.button === 0) {
         this.requestLock();
       }
@@ -111,30 +111,98 @@ export class Input {
     if (document.pointerLockElement) document.exitPointerLock?.();
   }
 
-  // Free-cursor aiming is used when the pointer is not locked (embedded frames, touch).
+  // Free-cursor aiming is used when the pointer is not locked (embedded frames).
   get freeAim() {
     return !this.locked && !this.touchMode;
   }
 
+  // Aim from the cursor (mouse without lock) or from the grooming finger (touch).
+  get aimFromCursor() {
+    return this.touchMode ? this.useFinger != null : !this.locked;
+  }
+
+  // Touch: every finger is classified when it lands. A finger on the dog grooms right where it
+  // touches, a finger on an object is a tap, anything else drags the view around.
   setupTouch(els) {
+    if (this.touchReady) return;
+    this.touchReady = true;
     this.touchMode = true;
-    const { stick, knob, use, alt, turnL, turnR, act, canvas } = els;
+    this.use = false;
+    const { stick, knob, alt, turnL, turnR, crouch, canvas } = els;
+    this.taps = [];
+    this.useFinger = null;
+    this.crouch = false;
+    const fingers = new Map();
+    const norm = (e) => {
+      const r = canvas.getBoundingClientRect();
+      this.cursorX = (e.clientX - r.left) / r.width;
+      this.cursorY = (e.clientY - r.top) / r.height;
+    };
+
+    canvas.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' || !this.enabled) return;
+      e.preventDefault();
+      try { canvas.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+      let mode = this.classify?.(e.clientX, e.clientY) ?? 'look';
+      if (mode === 'use' && this.useFinger != null) mode = 'look';
+      fingers.set(e.pointerId, { mode, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, moved: 0, t: performance.now() });
+      if (mode === 'use') {
+        this.useFinger = e.pointerId;
+        norm(e);
+        this.use = true;
+        this.usePressed = true;
+      }
+    });
+    canvas.addEventListener('pointermove', (e) => {
+      const f = fingers.get(e.pointerId);
+      if (!f) return;
+      e.preventDefault();
+      const dx = e.clientX - f.x, dy = e.clientY - f.y;
+      f.x = e.clientX;
+      f.y = e.clientY;
+      f.moved += Math.abs(dx) + Math.abs(dy);
+      if (f.mode === 'use') norm(e);
+      else {
+        if (f.mode === 'tap' && f.moved > 12) f.mode = 'look';
+        if (f.mode === 'look') {
+          this.lookDX += dx * 1.35;
+          this.lookDY += dy * 1.35;
+        }
+      }
+    });
+    const end = (e) => {
+      const f = fingers.get(e.pointerId);
+      if (!f) return;
+      fingers.delete(e.pointerId);
+      if (f.mode === 'use') {
+        this.use = false;
+        this.useFinger = null;
+      } else if (f.moved < 12 && performance.now() - f.t < 450 && e.type === 'pointerup') {
+        this.taps.push({ x: e.clientX, y: e.clientY });
+      }
+    };
+    canvas.addEventListener('pointerup', end);
+    canvas.addEventListener('pointercancel', end);
+
+    // Walking stick.
     let stickId = null, sx = 0, sy = 0;
     stick.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
       stickId = e.pointerId;
-      stick.setPointerCapture(e.pointerId);
+      try { stick.setPointerCapture(e.pointerId); } catch { /* ignore */ }
       const r = stick.getBoundingClientRect();
       sx = r.left + r.width / 2;
       sy = r.top + r.height / 2;
     });
     stick.addEventListener('pointermove', (e) => {
       if (e.pointerId !== stickId) return;
-      let dx = (e.clientX - sx) / 45, dy = (e.clientY - sy) / 45;
+      const rad = stick.offsetWidth * 0.4;
+      let dx = (e.clientX - sx) / rad, dy = (e.clientY - sy) / rad;
       const l = Math.hypot(dx, dy);
       if (l > 1) { dx /= l; dy /= l; }
       this.move.x = dx;
       this.move.y = dy;
-      knob.style.transform = `translate(${dx * 35}px, ${dy * 35}px)`;
+      knob.style.transform = `translate(${dx * rad * 0.75}px, ${dy * rad * 0.75}px)`;
     });
     const endStick = (e) => {
       if (e.pointerId !== stickId) return;
@@ -145,36 +213,35 @@ export class Input {
     stick.addEventListener('pointerup', endStick);
     stick.addEventListener('pointercancel', endStick);
 
-    let lookId = null, lx = 0, ly = 0;
-    canvas.addEventListener('pointerdown', (e) => {
-      if (e.pointerType !== 'touch' || lookId !== null) return;
-      lookId = e.pointerId;
-      lx = e.clientX;
-      ly = e.clientY;
-    });
-    canvas.addEventListener('pointermove', (e) => {
-      if (e.pointerId !== lookId) return;
-      this.lookDX += (e.clientX - lx) * 1.4;
-      this.lookDY += (e.clientY - ly) * 1.4;
-      lx = e.clientX;
-      ly = e.clientY;
-    });
-    const endLook = (e) => { if (e.pointerId === lookId) lookId = null; };
-    canvas.addEventListener('pointerup', endLook);
-    canvas.addEventListener('pointercancel', endLook);
-
     const hold = (btn, on, off) => {
-      btn.addEventListener('pointerdown', (e) => { e.preventDefault(); btn.classList.add('on'); on(); });
-      const up = () => { btn.classList.remove('on'); off?.(); };
+      btn.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        btn.classList.add('on');
+        on();
+      });
+      const up = () => {
+        btn.classList.remove('on');
+        off?.();
+      };
       btn.addEventListener('pointerup', up);
       btn.addEventListener('pointercancel', up);
       btn.addEventListener('pointerleave', up);
     };
-    hold(use, () => { this.use = true; this.usePressed = true; }, () => (this.use = false));
-    hold(alt, () => { this.altPressed = true; });
+    hold(alt, () => (this.altPressed = true));
     hold(turnL, () => this.keys.add('KeyQ'), () => this.keys.delete('KeyQ'));
     hold(turnR, () => this.keys.add('KeyE'), () => this.keys.delete('KeyE'));
-    hold(act, () => this.pressed.add('KeyF'));
+    crouch.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      this.crouch = !this.crouch;
+      crouch.classList.toggle('on', this.crouch);
+    });
+  }
+
+  takeTaps() {
+    if (!this.taps?.length) return [];
+    const t = this.taps;
+    this.taps = [];
+    return t;
   }
 
   consumeLook() {

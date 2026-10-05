@@ -30,11 +30,15 @@ body {
   -webkit-font-smoothing: antialiased;
   user-select: none;
   -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
   touch-action: none;
+  overscroll-behavior: none;
 }
 
 #app { position: fixed; inset: 0; overflow: hidden; }
-#view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; }
+#view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; touch-action: none; }
+body.is-touch #view { cursor: default; }
 
 button { font: inherit; color: inherit; cursor: pointer; }
 button:focus-visible { outline: 3px solid var(--peach-deep); outline-offset: 3px; }
@@ -80,6 +84,10 @@ button:focus-visible { outline: 3px solid var(--peach-deep); outline-offset: 3px
   font-variant-numeric: tabular-nums;
 }
 .chip .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--mint-deep); }
+.chip-btn { border: 0; pointer-events: auto; cursor: pointer; color: var(--ink); }
+.chip-btn:active { transform: translateY(2px); box-shadow: 0 2px 0 rgba(34, 65, 59, 0.12); }
+.chip-pause { padding: 6px 12px; }
+.pause-bars { width: 12px; height: 14px; border-left: 4px solid var(--ink); border-right: 4px solid var(--ink); }
 .coin {
   width: 16px; height: 16px; border-radius: 50%;
   background: radial-gradient(circle at 35% 30%, #fff3c4, #f2c55c 55%, #c9952f);
@@ -236,12 +244,18 @@ button:focus-visible { outline: 3px solid var(--peach-deep); outline-offset: 3px
 .flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
 
 /* ---------- Screens & modals ---------- */
-.screen { position: absolute; inset: 0; display: grid; place-items: center; padding: 16px; overflow-y: auto; }
+.screen {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center;
+  padding: 16px; overflow-y: auto; touch-action: pan-y;
+}
+/* Auto margins centre the card but still let a tall card scroll from its top. */
+.screen > * { margin-block: auto; flex-shrink: 0; }
 .modal { background: rgba(29, 46, 42, 0.38); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
 
 .title-screen {
   background: linear-gradient(90deg, rgba(29, 46, 42, 0.45), rgba(29, 46, 42, 0.05) 70%);
-  justify-items: start;
+  align-items: flex-start;
   padding-inline: clamp(16px, 6vw, 90px);
 }
 .title-card {
@@ -276,6 +290,11 @@ button:focus-visible { outline: 3px solid var(--peach-deep); outline-offset: 3px
 .controls dt { font-weight: 800; }
 .controls dd { margin: 0; color: var(--ink-soft); }
 .title-foot { font-size: 0.8rem; color: var(--ink-soft); margin: 12px 0 0; }
+.controls-touch, .rotate-tip { display: none; }
+body.is-touch .controls-keys { display: none; }
+body.is-touch .controls-touch { display: grid; }
+.rotate-tip { margin: 4px 0 0; font-size: 0.85rem; font-weight: 600; color: var(--peach-deep); }
+@media (orientation: portrait) { body.is-touch .rotate-tip { display: block; } }
 
 /* Intake ticket */
 .intake {
@@ -361,23 +380,43 @@ button:focus-visible { outline: 3px solid var(--peach-deep); outline-offset: 3px
 .pause-actions { display: grid; gap: 8px; }
 
 /* ---------- Touch ---------- */
+body.is-touch .crosshair { display: none; }
+body.is-touch .prompt kbd { display: none; }
 .touch { position: absolute; inset: 0; pointer-events: none; }
+.finger-ring {
+  position: absolute; width: 54px; height: 54px; margin: -27px 0 0 -27px;
+  border-radius: 50%; border: 3px solid rgba(247, 250, 250, 0.9);
+  box-shadow: 0 0 0 2px rgba(34, 65, 59, 0.25), inset 0 0 0 2px rgba(242, 179, 139, 0.6);
+  will-change: transform;
+}
 .stick {
-  position: absolute; left: 22px; bottom: calc(110px + env(safe-area-inset-bottom, 0px));
-  width: 110px; height: 110px; border-radius: 50%;
-  background: rgba(247, 250, 250, 0.25); box-shadow: inset 0 0 0 2px rgba(247, 250, 250, 0.6);
-  pointer-events: auto;
+  position: absolute;
+  left: calc(22px + env(safe-area-inset-left, 0px));
+  bottom: calc(104px + env(safe-area-inset-bottom, 0px));
+  width: 104px; height: 104px; border-radius: 50%;
+  background: rgba(247, 250, 250, 0.22); box-shadow: inset 0 0 0 2px rgba(247, 250, 250, 0.6);
+  pointer-events: auto; touch-action: none;
 }
-.stick-knob { position: absolute; left: 35px; top: 35px; width: 40px; height: 40px; border-radius: 50%; background: rgba(247, 250, 250, 0.85); }
+.stick-knob {
+  position: absolute; left: 50%; top: 50%; width: 40%; height: 40%; margin: -20% 0 0 -20%;
+  border-radius: 50%; background: rgba(247, 250, 250, 0.9); box-shadow: 0 3px 0 rgba(34, 65, 59, 0.2);
+}
 .touch-buttons {
-  position: absolute; right: 16px; bottom: calc(104px + env(safe-area-inset-bottom, 0px));
-  display: grid; grid-template-columns: repeat(2, auto); gap: 8px; justify-items: center; align-items: end;
-  pointer-events: auto;
+  position: absolute;
+  right: calc(18px + env(safe-area-inset-right, 0px));
+  bottom: calc(104px + env(safe-area-inset-bottom, 0px));
+  display: grid; grid-template-columns: repeat(2, 52px); gap: 10px;
+  pointer-events: auto; touch-action: none;
 }
-.tbtn { border: 0; border-radius: 50%; background: rgba(247, 250, 250, 0.85); font-weight: 800; color: var(--ink); box-shadow: 0 4px 0 rgba(34, 65, 59, 0.2); }
-.tbtn.small { width: 48px; height: 48px; font-size: 0.8rem; }
-.tbtn.big { grid-column: 1 / 3; width: 84px; height: 84px; background: var(--peach); font-family: var(--font-display); font-size: 1.1rem; }
-.tbtn.on { background: var(--mint); }
+.tbtn {
+  width: 52px; height: 52px; padding: 0; border: 0; border-radius: 50%;
+  display: grid; place-items: center;
+  background: rgba(247, 250, 250, 0.9); color: var(--ink);
+  box-shadow: 0 4px 0 rgba(34, 65, 59, 0.2);
+}
+.tbtn svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.tbtn.on { background: var(--mint); box-shadow: 0 2px 0 var(--mint-deep); transform: translateY(2px); }
+#t-crouch.on { background: var(--peach); }
 
 @media (max-width: 720px) {
   .job { width: min(210px, 52vw); padding: 10px; }
@@ -389,7 +428,7 @@ button:focus-visible { outline: 3px solid var(--peach-deep); outline-offset: 3px
   .receipt { grid-template-columns: 1fr; justify-items: center; }
   .receipt-body { width: 100%; }
   .cat-cols { grid-template-columns: 1fr; }
-  .title-screen { justify-items: center; background: rgba(29, 46, 42, 0.35); }
+  .title-screen { align-items: center; background: rgba(29, 46, 42, 0.35); }
   .hud-corner .chip { font-size: 0.85rem; padding: 5px 10px; }
   .prompt { bottom: calc(98px + env(safe-area-inset-bottom, 0px)); font-size: 0.95rem; }
   .toasts { max-width: calc(48vw - 20px); top: calc(56px + env(safe-area-inset-top, 0px)); }
@@ -399,6 +438,79 @@ button:focus-visible { outline: 3px solid var(--peach-deep); outline-offset: 3px
   .job-req { font-size: 1.05rem; }
   .toast { font-size: 0.95rem; }
   .guard-tag { bottom: calc(66px + env(safe-area-inset-bottom, 0px)); }
+}
+
+/* Phones held upright: chips stack on the left, controls sit above the tool bar. */
+@media (max-width: 720px) and (orientation: portrait) {
+  .hud-corner { flex-direction: column; align-items: flex-start; gap: 6px; left: calc(12px + env(safe-area-inset-left, 0px)); top: calc(10px + env(safe-area-inset-top, 0px)); }
+  .job { width: min(200px, 50vw); top: calc(10px + env(safe-area-inset-top, 0px)); right: calc(12px + env(safe-area-inset-right, 0px)); }
+  .toasts { top: calc(124px + env(safe-area-inset-top, 0px)); left: calc(12px + env(safe-area-inset-left, 0px)); max-width: calc(100vw - 24px); }
+  .prompt { white-space: nowrap; }
+  .prompt { bottom: calc(72px + env(safe-area-inset-bottom, 0px)); max-width: calc(100vw - 24px); overflow: hidden; text-overflow: ellipsis; font-size: 0.92rem; }
+  .guard-tag { bottom: calc(124px + env(safe-area-inset-bottom, 0px)); font-size: 0.78rem; max-width: 46vw; text-align: center; }
+  .hotbar { bottom: calc(10px + env(safe-area-inset-bottom, 0px)); }
+  .stick { width: 92px; height: 92px; left: calc(14px + env(safe-area-inset-left, 0px)); bottom: calc(150px + env(safe-area-inset-bottom, 0px)); }
+  .touch-buttons { grid-template-columns: 48px; gap: 10px; right: calc(12px + env(safe-area-inset-right, 0px)); bottom: calc(150px + env(safe-area-inset-bottom, 0px)); }
+  .tbtn { width: 48px; height: 48px; }
+}
+
+/* Phones on their side: everything shrinks to keep the salon in view. */
+@media (max-height: 520px) {
+  .hud-corner { top: calc(8px + env(safe-area-inset-top, 0px)); left: calc(12px + env(safe-area-inset-left, 0px)); gap: 6px; }
+  .hud-corner .chip { font-size: 0.82rem; padding: 4px 10px; }
+  .job { top: calc(8px + env(safe-area-inset-top, 0px)); right: calc(12px + env(safe-area-inset-right, 0px)); width: 210px; padding: 8px 10px; border-radius: 14px; }
+  .job-steps li:not(.active) { display: none; }
+  .job-head { margin-bottom: 4px; padding-bottom: 4px; }
+  .job-dog { font-size: 1rem; }
+  .job-req { font-size: 1rem; }
+  .job-steps li { font-size: 0.76rem; }
+  .toasts { top: calc(46px + env(safe-area-inset-top, 0px)); left: calc(12px + env(safe-area-inset-left, 0px)); max-width: min(320px, calc(100vw - 260px)); }
+  .toast { font-size: 0.9rem; padding: 6px 14px; }
+  .toast.big { font-size: 1.15rem; }
+  .slot { width: 40px; height: 40px; border-radius: 12px; }
+  .slot svg { width: 28px; height: 28px; }
+  .slot .num { display: none; }
+  .hotbar { gap: 4px; padding: 5px; border-radius: 16px; bottom: calc(8px + env(safe-area-inset-bottom, 0px)); }
+  .prompt { bottom: calc(64px + env(safe-area-inset-bottom, 0px)); font-size: 0.92rem; padding: 8px 16px; }
+  .guard-tag { top: calc(10px + env(safe-area-inset-top, 0px)); bottom: auto; font-size: 0.78rem; }
+  .hint { top: calc(50% + 26px); font-size: 0.78rem; }
+  .speech { font-size: 1.1rem; max-width: 220px; }
+  .stick { width: 88px; height: 88px; left: calc(16px + env(safe-area-inset-left, 0px)); bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+  .touch-buttons { grid-template-columns: repeat(2, 46px); gap: 8px; right: calc(14px + env(safe-area-inset-right, 0px)); bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+  .tbtn { width: 46px; height: 46px; }
+  .tbtn svg { width: 22px; height: 22px; }
+
+  .screen { padding: 10px; }
+  .title-card { padding: 14px 20px 12px; border-radius: 22px; }
+  .logo { font-size: 2.5rem; }
+  .tagline { font-size: 1.2rem; margin: 6px auto 10px; }
+  .controls { margin: 10px 0 2px; gap: 3px 12px; font-size: 0.78rem; }
+  .title-foot, .rotate-tip { display: none !important; }
+  .intake { width: min(660px, 100%); }
+  .intake-head { padding: 9px 16px 13px; }
+  .intake-body { gap: 6px 18px; padding: 4px 16px 2px; grid-template-columns: 1.1fr 1fr; grid-auto-flow: dense; }
+  .intake-row { grid-column: 1; }
+  .intake-cut, .intake-note { grid-column: 2; }
+  .intake-row.big strong { font-size: 1.1rem; }
+  .intake-cut { padding: 6px 10px; }
+  .intake-cut strong { font-size: 1.15rem; }
+  .intake-note { font-size: 1.2rem; }
+  .intake-foot { padding: 8px 16px 12px; }
+  .receipt { width: min(700px, 100%); padding: 12px 16px; gap: 16px; grid-template-columns: auto 1fr; }
+  .receipt-photo canvas { width: 140px; }
+  .receipt-body { gap: 3px; }
+  .receipt-body h2 { font-size: 1.2rem; }
+  .receipt-lines { font-size: 0.76rem; gap: 1px; margin-top: 2px; }
+  .receipt-lines li { padding-bottom: 1px; }
+  .star { width: 18px; height: 18px; }
+  .receipt-total { font-size: 1rem; }
+  .receipt-total strong { font-size: 1.35rem; }
+  .receipt-quote { font-size: 1.05rem; }
+  .receipt-actions { margin-top: 2px; }
+  .receipt-actions .btn { padding: 0.5em 1.1em; font-size: 0.95rem; }
+  .cat-head { padding: 10px 16px; }
+  .cat-cols { padding: 10px 16px; }
+  .cat-foot { padding: 8px 16px 10px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

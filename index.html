@@ -2,8 +2,11 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
     <title>Suds &amp; Snips</title>
+    <meta name="theme-color" content="#a8dccb" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="description" content="A cozy first-person dog grooming salon. Matted, muddy and miserable goes in. A fluffball comes out." />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -16,8 +19,9 @@
 
       <div id="hud" hidden>
         <div class="hud-corner">
+          <button id="hud-pause" class="chip chip-btn chip-pause" aria-label="Pause"><span class="pause-bars" aria-hidden="true"></span></button>
           <div class="chip chip-day"><span id="hud-day">Day 1</span><span class="dot"></span><span id="hud-clock">9:00</span></div>
-          <div class="chip chip-money"><span class="coin" aria-hidden="true"></span><span id="hud-money">$0</span></div>
+          <button id="hud-shop" class="chip chip-btn chip-money" aria-label="Open the salon catalogue"><span class="coin" aria-hidden="true"></span><span id="hud-money">$0</span></button>
         </div>
 
         <aside id="job" class="job" hidden>
@@ -38,13 +42,13 @@
       </div>
 
       <div id="touch" class="touch" hidden>
-        <div id="stick" class="stick"><div class="stick-knob"></div></div>
+        <div id="finger" class="finger-ring" hidden></div>
+        <div id="stick" class="stick" aria-label="Walk"><div class="stick-knob"></div></div>
         <div class="touch-buttons">
-          <button id="t-turn-l" class="tbtn small" aria-label="Turn dog left">⟲</button>
-          <button id="t-alt" class="tbtn small" aria-label="Tool option">Opt</button>
-          <button id="t-turn-r" class="tbtn small" aria-label="Turn dog right">⟳</button>
-          <button id="t-act" class="tbtn small" aria-label="Interact">Act</button>
-          <button id="t-use" class="tbtn big" aria-label="Use tool">Use</button>
+          <button id="t-turn-l" class="tbtn" aria-label="Turn the dog left"><svg viewBox="0 0 24 24"><path d="M7 7.5A7 7 0 1 1 5 13" /><path d="M7 3v5h5" /></svg></button>
+          <button id="t-turn-r" class="tbtn" aria-label="Turn the dog right"><svg viewBox="0 0 24 24"><path d="M17 7.5A7 7 0 1 0 19 13" /><path d="M17 3v5h-5" /></svg></button>
+          <button id="t-alt" class="tbtn" aria-label="Tool option"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" /><path d="M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3M5.5 5.5l2.1 2.1M16.4 16.4l2.1 2.1M5.5 18.5l2.1-2.1M16.4 7.6l2.1-2.1" /></svg></button>
+          <button id="t-crouch" class="tbtn" aria-label="Crouch"><svg viewBox="0 0 24 24"><path d="M12 4v11" /><path d="M7 10l5 5 5-5" /><path d="M5 20h14" /></svg></button>
         </div>
       </div>
 
@@ -56,7 +60,16 @@
             <button id="btn-start" class="btn btn-peach">Open the salon</button>
             <button id="btn-reset" class="btn btn-ghost" hidden>Start a fresh salon</button>
           </div>
-          <dl class="controls">
+          <dl class="controls controls-touch">
+            <div><dt>Touch the dog</dt><dd>Groom right there</dd></div>
+            <div><dt>Drag elsewhere</dt><dd>Look around</dd></div>
+            <div><dt>Tool bar</dt><dd>Pick a tool</dd></div>
+            <div><dt>Gear button</dt><dd>Tool option</dd></div>
+            <div><dt>Turn buttons</dt><dd>Turn the dog</dd></div>
+            <div><dt>Tap things</dt><dd>Treats, bell, catalogue</dd></div>
+          </dl>
+          <p class="rotate-tip">Tip: turn your phone sideways for a bigger salon.</p>
+          <dl class="controls controls-keys">
             <div><dt>Mouse</dt><dd>Look &amp; aim</dd></div>
             <div><dt>Click</dt><dd>Use tool</dd></div>
             <div><dt>1–8 / wheel</dt><dd>Pick tool</dd></div>

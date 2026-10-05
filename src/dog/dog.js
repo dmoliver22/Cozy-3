@@ -4,6 +4,7 @@ import { Spring, Pendulum } from '../core/springs.js';
 import { clamp, lerp, mulberry32, smoothstep } from '../core/math.js';
 import { Fur, FurView, K, REGION } from './fur.js';
 import { BREEDS, CUTS } from './breeds.js';
+import { QUALITY } from '../core/quality.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const _a = new THREE.Vector3();
@@ -373,7 +374,7 @@ export class Dog {
     const earA = 2 * Math.PI * B.ears.w * 0.5 * B.ears.seg * 0.8;
     let total = torsoA + headA + snoutA + neckA + tailA * B.tail.segs + earA * 4;
     for (const [a, b] of legA) total += a + b;
-    const N = B.fur.count;
+    const N = Math.round(B.fur.count * QUALITY.fur);
     const cnt = (a) => Math.max(6, Math.round((N * a) / total));
 
     parts.push({

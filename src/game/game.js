@@ -21,19 +21,38 @@ import { loadSave, writeSave, defaultSave, clearSave } from './save.js';
 import { Hud, showScreen, fillTicket, fillCheckout, buildShop } from '../ui/hud.js';
 import { clamp, pick } from '../core/math.js';
 import { Spring } from '../core/springs.js';
+import { QUALITY, TOUCH_FIRST, IS_PHONE } from '../core/quality.js';
 
 const $ = (id) => document.getElementById(id);
 const _v = new THREE.Vector3();
 const _o = new THREE.Vector3();
 const _d = new THREE.Vector3();
+const _to = new THREE.Vector3();
+const _td = new THREE.Vector3();
 const col3 = [0, 0, 0];
 const APPTS_PER_DAY = 3;
+const _lo = new THREE.Vector3();
+const _ld = new THREE.Vector3();
+const _iq = new THREE.Quaternion();
+
+// Does a ray pass through a body's ellipsoid inflated by `pad`?
+function rayHitsEllipsoid(o, d, body, r, pad) {
+  _iq.copy(body.quat).invert();
+  _lo.subVectors(o, body.pos).applyQuaternion(_iq);
+  _ld.copy(d).applyQuaternion(_iq);
+  const rx = r[0] + pad, ry = r[1] + pad, rz = r[2] + pad;
+  _lo.set(_lo.x / rx, _lo.y / ry, _lo.z / rz);
+  _ld.set(_ld.x / rx, _ld.y / ry, _ld.z / rz);
+  const A = _ld.dot(_ld), B = 2 * _lo.dot(_ld), C = _lo.dot(_lo) - 1;
+  const disc = B * B - 4 * A * C;
+  return disc >= 0 && (-B + Math.sqrt(disc)) > 0;
+}
 
 export class Game {
   constructor(canvas) {
     this.canvas = canvas;
     const renderer = (this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: false }));
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.6));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, QUALITY.startDpr));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -55,7 +74,7 @@ export class Game {
     sun.position.set(-6.5, 4.2, -0.6);
     sun.target.position.set(0.5, 0.6, -1.4);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.mapSize.set(QUALITY.shadow, QUALITY.shadow);
     const sc = sun.shadow.camera;
     sc.left = -3.6; sc.right = 3.6; sc.top = 3; sc.bottom = -2.5; sc.near = 1; sc.far = 14;
     sun.shadow.bias = -0.0004;
@@ -125,7 +144,7 @@ export class Game {
     this._adaptTimer = (this._adaptTimer ?? 0) + dt;
     if (this._adaptTimer < 2) return;
     this._adaptTimer = 0;
-    const max = Math.min(window.devicePixelRatio || 1, 1.6);
+    const max = Math.min(window.devicePixelRatio || 1, QUALITY.maxDpr);
     let pr = this.renderer.getPixelRatio();
     if (this._frameEma > 0.028 && pr > 0.6) pr = Math.max(0.6, pr * 0.85);
     else if (this._frameEma < 0.018 && pr < max) pr = Math.min(max, pr * 1.1);
@@ -171,12 +190,84 @@ export class Game {
       else if (e.code === 'Escape' && this.modal === 'pause') this.resume();
       else if (e.code === 'Escape' && this.modal === 'shop') this.closeShop();
     });
-    if (matchMedia('(pointer: coarse)').matches && 'ontouchstart' in window) {
-      $('touch').hidden = false;
-      this.input.setupTouch({
-        stick: $('stick'), knob: document.querySelector('.stick-knob'), use: $('t-use'), alt: $('t-alt'),
-        turnL: $('t-turn-l'), turnR: $('t-turn-r'), act: $('t-act'), canvas: this.canvas,
-      });
+    $('hud-pause').addEventListener('click', () => this.pause());
+    $('hud-shop').addEventListener('click', () => {
+      if (!this.modal && this.stage !== 'title') this.openShop('play');
+    });
+    // Touch-first devices start in touch mode; hybrids switch over on their first touch.
+    if (TOUCH_FIRST) this._enableTouch();
+    else addEventListener('pointerdown', (e) => e.pointerType === 'touch' && this._enableTouch(), { capture: true });
+  }
+
+  _enableTouch() {
+    if (this.input.touchReady) return;
+    document.body.classList.add('is-touch');
+    $('touch').hidden = false;
+    this.input.classify = (x, y) => this._classifyTouch(x, y);
+    this.input.setupTouch({
+      stick: $('stick'), knob: document.querySelector('.stick-knob'), alt: $('t-alt'),
+      turnL: $('t-turn-l'), turnR: $('t-turn-r'), crouch: $('t-crouch'), canvas: this.canvas,
+    });
+    this.tools._optionLabel();
+  }
+
+  // How the tool option is triggered, for hints.
+  get optKey() {
+    return this.input.touchMode ? 'gear button' : 'R';
+  }
+
+  _rayAt(clientX, clientY, origin, dir) {
+    const r = this.canvas.getBoundingClientRect();
+    this.camera.getWorldPosition(origin);
+    dir.set(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1, 0.5).unproject(this.camera).sub(origin).normalize();
+  }
+
+  // A finger landing on the dog grooms it, on an object taps it, anywhere else looks around.
+  _classifyTouch(cx, cy) {
+    if (this.modal || this.stage === 'title') return 'look';
+    const o = new THREE.Vector3(), d = new THREE.Vector3();
+    this._rayAt(cx, cy, o, d);
+    const tool = this.tools.id;
+    if (tool === 'camera' && this.stage === 'groom') return 'use';
+    const dog = this.playing ? this.dog : null;
+    if (dog?.fur) {
+      if (dog.raycast(o, d, 5)) return 'use';
+      // A little forgiving around the fluffy silhouette: fingers are fat and fur is soft.
+      const pad = dog.B.fur.len * 0.6 + 0.04;
+      if (rayHitsEllipsoid(o, d, dog.torso, dog.B.torso, pad) || rayHitsEllipsoid(o, d, dog.head, dog.B.head.r, pad)) return 'use';
+    }
+    if (tool === 'hands') {
+      for (const b of this.bubbles.items) {
+        if (b.stuck >= 0) continue;
+        _v.subVectors(b.p, o);
+        const t = _v.dot(d);
+        if (t > 0 && _v.lengthSq() - t * t < (b.r + 0.05) ** 2) return 'use';
+      }
+    }
+    if (this._interact(o, d, 8)) return 'tap';
+    return 'look';
+  }
+
+  // Touch play: glide to a good viewpoint for each part of the appointment.
+  _frameStation(where) {
+    if (!this.input.touchMode) return;
+    const back = this.camera.aspect < 0.8 ? 0.4 : 0;
+    const P = this.player;
+    if (where === 'tub') P.glideTo(new THREE.Vector3(TUB.x, 0, -1.5 + back), new THREE.Vector3(TUB.x, TUB.floor + 0.4, TUB.z));
+    else if (where === 'table') P.glideTo(new THREE.Vector3(TABLE.x - 0.05, 0, -1.25 + back), new THREE.Vector3(TABLE.x, TABLE.y + 0.38, TABLE.z));
+    else if (where === 'lobby') P.glideTo(new THREE.Vector3(0.2, 0, -0.1 + back * 0.5), new THREE.Vector3(1.2, 0.95, 1.7));
+  }
+
+  // A little haptic tick on phones that support it.
+  buzz(pattern) {
+    if (!this.input.touchMode) return;
+    const now = performance.now();
+    if (now - (this._lastBuzz || 0) < 70) return;
+    this._lastBuzz = now;
+    try {
+      navigator.vibrate?.(pattern);
+    } catch {
+      /* not allowed here */
     }
   }
 
@@ -226,6 +317,14 @@ export class Game {
     this.player.pos.set(0.1, 0, -0.4);
     this.player.yaw = 0;
     this.player.pitch = -0.3;
+    // Phones get the whole screen when the browser allows it.
+    if (IS_PHONE && !document.fullscreenElement) {
+      try {
+        document.documentElement.requestFullscreen?.({ navigationUI: 'hide' })?.catch?.(() => {});
+      } catch {
+        /* not allowed in this frame */
+      }
+    }
     this._beginAppointment();
   }
 
@@ -303,6 +402,7 @@ export class Game {
     this.owner = owner;
     this.stage = 'arrive';
     this._updateSteps();
+    this._frameStation('lobby');
 
     await this._wait(0.6);
     this.salon.openDoor(true);
@@ -332,6 +432,7 @@ export class Game {
     this.toast(`Off to the tub, ${this.appt.name}!`);
     const dog = this.dog;
     this.hud.suggest(['spray']);
+    this._frameStation('tub');
     await dog.do({ type: 'walk', to: STATIONS.tubFront });
     await dog.do({ type: 'jump', to: STATIONS.tub, groundY: TUB.floor });
     await dog.do({ type: 'turn', yaw: Math.PI / 2 });
@@ -346,6 +447,7 @@ export class Game {
     this.stage = 'toTable';
     const dog = this.dog;
     this.bubbles.releaseAll();
+    this._frameStation('table');
     await dog.do({ type: 'jump', to: STATIONS.tubFront, groundY: 0 });
     await dog.do({ type: 'walk', to: STATIONS.tableFront });
     await dog.do({ type: 'jump', to: STATIONS.table, groundY: TABLE.y });
@@ -361,6 +463,7 @@ export class Game {
     this.tools.select(0);
     await this._wait(1.2);
     await dog.do({ type: 'jump', to: STATIONS.tableFront, groundY: 0 });
+    this._frameStation('lobby');
     await dog.do({ type: 'walk', to: new THREE.Vector3(STATIONS.lobby.x, 0, STATIONS.lobby.z - 0.1) });
     await dog.do({ type: 'turn', yaw: Math.atan2(this.owner.group.position.x - dog.torso.pos.x, this.owner.group.position.z - dog.torso.pos.z) });
     // The proud shake.
@@ -486,6 +589,7 @@ export class Game {
     dog.bow = new Bow(hex, local, size);
     dog.bow.attach(this.scene);
     this.audio.chime([0, 7, 12], 0.07, 0.07);
+    this.buzz(20);
     this.sparkles.burst('star', point, 8, 0.6, { color: hex, size: 0.03 });
     dog.please(0.05);
     dog.excited = 1;
@@ -506,6 +610,7 @@ export class Game {
     const mat = dog.fur.mats[mi];
     const p = new THREE.Vector3(mat.cx, mat.cy, mat.cz);
     this.audio.boing(1.2);
+    this.buzz(40);
     this.sparkles.burst('star', p, 10, 0.8, { color: '#f6d68a', size: 0.035 });
     // A few clumps of shed undercoat fly off.
     for (let i = 0; i < 6; i++) {
@@ -542,6 +647,7 @@ export class Game {
     }
     this.hud.flash();
     this.audio.shutter();
+    this.buzz(30);
     this.tools.rig.visible = false;
     this.dog.squint = 0;
     const A = this.appt;
@@ -573,8 +679,8 @@ export class Game {
     }
   }
 
-  _interact(origin, dir) {
-    const ray = new THREE.Raycaster(origin, dir, 0, 2.2);
+  _interact(origin, dir, range = 2.2) {
+    const ray = new THREE.Raycaster(origin, dir, 0, range);
     const objs = this.salon.interactables.filter((i) => i.object.visible && (i.id !== 'radio' || this.upgrades.radio));
     const hits = ray.intersectObjects(objs.map((i) => i.object), false);
     if (!hits.length) return null;
@@ -844,20 +950,46 @@ export class Game {
       }
     }
 
+    // Touch controls only while actually playing.
+    const showTouch = input.touchMode && !this.modal && this.stage !== 'title';
+    if (showTouch !== this._touchShown) {
+      this._touchShown = showTouch;
+      $('touch').hidden = !showTouch;
+    }
+
     // Tools.
     const stageForTools = this.stage;
     if (!frozen) {
       const res = this.tools.update(dt, { input, dog: this.playing ? dog : null, origin: _o, dir: _d, canUse, stage: stageForTools });
       let hint = this.tools.hint;
-      if (!hint) {
-        const item = this._interact(_o, _d);
-        if (item) hint = `F · ${item.label}`;
-        this.hud.setCrosshair(!!item || !!res.hit, input.freeAim);
-      } else this.hud.setCrosshair(true, input.freeAim);
-      this.hud.setHint(hint);
-      // Hands can click things too.
-      if (this.tools.id === 'hands' && input.usePressed && !res.hit) this._doInteract(this._interact(_o, _d));
+      if (input.touchMode) {
+        // The ring and hint follow the grooming finger; taps poke objects.
+        if (input.useFinger != null) {
+          const r = this.canvas.getBoundingClientRect();
+          const fx = r.left + input.cursorX * r.width, fy = r.top + input.cursorY * r.height;
+          this.hud.setFinger(fx, fy, !!res.hit);
+          this.hud.setHint(hint, fx, fy - 70);
+        } else {
+          this.hud.setFinger(null);
+          this.hud.setHint('');
+        }
+        for (const t of input.takeTaps()) {
+          this._rayAt(t.x, t.y, _to, _td);
+          this._doInteract(this._interact(_to, _td, 8));
+        }
+      } else {
+        if (!hint) {
+          const item = this._interact(_o, _d);
+          if (item) hint = `F · ${item.label}`;
+          this.hud.setCrosshair(!!item || !!res.hit, input.freeAim);
+        } else this.hud.setCrosshair(true, input.freeAim);
+        this.hud.setHint(hint);
+        // Hands can click things too.
+        if (this.tools.id === 'hands' && input.usePressed && !res.hit) this._doInteract(this._interact(_o, _d));
+      }
     } else {
+      input.takeTaps();
+      if (input.touchMode) this.hud.setFinger(null);
       this.tools.dryerOn = 0;
       if (this.audio.ctx) for (const k of ['spray', 'dryer', 'clip', 'scrub']) this.audio.setLoop(k, 0);
     }
@@ -970,19 +1102,20 @@ export class Game {
       if (clean) {
         this.stage = 'bathDone';
         this.audio.squeak();
+        this.buzz([20, 40, 20]);
         this.toast('Squeaky clean!', true);
         this.sparkles.burst('star', dog.torso.pos.clone().add(_v.set(0, 0.2, 0)), 16, 1.0, { size: 0.035 });
         dog.please(0.08);
         dog.do({ type: 'wait', time: 0.4 }).then(() => dog.do({ type: 'shake', amp: 1 }));
       } else if (st.clean >= 0.6 && this.time - this.bathStart > 20) {
-        this._prompt('Move to the drying table early', 'F', () => this._toTable());
+        this._prompt('Move to the table early', 'F', () => this._toTable());
       } else this.hud.prompt('');
       if (st.wetAvg < 0.2 && st.soap > 0.2 && !this.flags.wetHint) {
         this.flags.wetHint = true;
         this.toast('Soak the coat first so the shampoo can lather');
       }
     }
-    if (this.stage === 'bathDone') this._prompt(`Move ${this.appt.name} to the drying table`, 'F', () => this._toTable());
+    if (this.stage === 'bathDone') this._prompt(`Move ${this.appt.name} to the table`, 'F', () => this._toTable());
     if (this.stage === 'groom') {
       const A = this.appt;
       let fluffy = 0;
@@ -993,6 +1126,7 @@ export class Game {
         this.toast(dog.B.fur.len > 0.075 ? 'Perfect cloud!' : 'So fluffy!', true);
         this.audio.chime([0, 4, 7, 11, 14]);
         this.audio.bark(dog.B.bark, 2);
+        this.buzz([30, 50, 30, 50, 60]);
         dog.excited = 4;
         dog.please(0.15);
         this.sparkles.burst('star', dog.torso.pos.clone().add(_v.set(0, 0.25, 0)), 24, 1.2, { size: 0.04 });
@@ -1010,12 +1144,12 @@ export class Game {
       }
       const ready = st.dry >= 0.95 && st.matsLeft === 0 && (!wantsCut || st.cut >= 0.85) && (!A.bow || dog.bow);
       if (ready) {
-        this._prompt('All done! Grab the camera (8) for the photo', '8', () => this.tools.select(7));
+        this._prompt(this.input.touchMode ? 'All done! Tap for the camera' : 'All done! Grab the camera for the photo', '8', () => this.tools.select(7));
         if (!this.flags.readyToast) {
           this.flags.readyToast = true;
           this.toast('Ready for the Wall of Fluff', true);
         }
-      } else if (st.dry >= 0.6) this._prompt('Finish with a photo whenever you like', '8', () => this.tools.select(7));
+      } else if (st.dry >= 0.6) this._prompt(this.input.touchMode ? 'Done? Tap for the camera' : 'Finish with a photo whenever you like', '8', () => this.tools.select(7));
       else this.hud.prompt('');
     }
   }

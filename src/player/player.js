@@ -23,11 +23,18 @@ export class Player {
     this.sens = 0.0022;
     this.lookVel = [0, 0];
     this.onStep = null;
+    this.glide = null;
+  }
+
+  // Ease over to a viewpoint and look at a point (touch play skips most of the walking).
+  glideTo(pos, look) {
+    this.glide = { pos: pos.clone(), look: look.clone(), turn: true };
   }
 
   update(dt, input, frozen = false) {
     const [dx, dy] = input.consumeLook();
     this.lookVel = [dx / Math.max(dt, 1e-3), dy / Math.max(dt, 1e-3)];
+    if (this.glide && !frozen) this._updateGlide(dt, dx !== 0 || dy !== 0 || input.move.x !== 0 || input.move.y !== 0);
     if (!frozen) {
       this.yaw -= dx * this.sens;
       this.pitch = clamp(this.pitch - dy * this.sens, -1.4, 1.35);
@@ -52,7 +59,7 @@ export class Player {
     if (l > 1) { mx /= l; mz /= l; }
     _f.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
     _r.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
-    const crouch = !frozen && (input.down('KeyC') || input.down('ControlLeft'));
+    const crouch = !frozen && (input.down('KeyC') || input.down('ControlLeft') || input.crouch);
     const speed = crouch ? 1.2 : 2.1;
     const wx = (_f.x * mz + _r.x * mx) * speed, wz = (_f.z * mz + _r.z * mx) * speed;
     const k = 1 - Math.exp(-dt * 10);
@@ -114,13 +121,38 @@ export class Player {
   // Aim ray: screen centre when locked, the cursor otherwise.
   aim(input, origin, dir) {
     this.camera.getWorldPosition(origin);
-    if (input.freeAim) {
+    if (input.aimFromCursor) {
       const ndc = new THREE.Vector3(input.cursorX * 2 - 1, -(input.cursorY * 2 - 1), 0.5);
       ndc.unproject(this.camera);
       dir.copy(ndc).sub(origin).normalize();
     } else {
       this.camera.getWorldDirection(dir);
     }
+  }
+
+  _updateGlide(dt, userMoved) {
+    const g = this.glide;
+    // Taking the stick cancels the walk; dragging the view only cancels the turn.
+    if (userMoved) {
+      g.turn = false;
+      if (this.vel.lengthSq() > 0.01) {
+        this.glide = null;
+        return;
+      }
+    }
+    const k = 1 - Math.exp(-dt * 3.2);
+    this.pos.x += (g.pos.x - this.pos.x) * k;
+    this.pos.z += (g.pos.z - this.pos.z) * k;
+    let turnLeft = 0;
+    if (g.turn) {
+      const dx = g.look.x - this.pos.x, dz = g.look.z - this.pos.z;
+      const dyaw = Math.atan2(Math.sin(Math.atan2(-dx, -dz) - this.yaw), Math.cos(Math.atan2(-dx, -dz) - this.yaw));
+      const pitch = Math.atan2(g.look.y - this.eye.value, Math.hypot(dx, dz));
+      this.yaw += dyaw * Math.min(1, k * 1.2);
+      this.pitch += (pitch - this.pitch) * Math.min(1, k * 1.2);
+      turnLeft = Math.abs(dyaw) + Math.abs(pitch - this.pitch);
+    }
+    if (Math.hypot(g.pos.x - this.pos.x, g.pos.z - this.pos.z) < 0.01 && turnLeft < 0.01) this.glide = null;
   }
 
   // Snap to look at a point (used when stations change).

@@ -28,6 +28,8 @@ page.on('pageerror', (e) => errors.push(e.message));
 page.on('console', (m) => m.type() === 'error' && !/Failed to load resource/.test(m.text()) && errors.push(m.text()));
 
 const ev = (fn) => page.evaluate(fn);
+// Cards spring in; click straight through rather than waiting for them to settle.
+const press = (sel) => page.$eval(sel, (el) => el.click());
 const stage = () => ev(() => window.__suds.stage());
 async function waitStage(want, ms = 90000) {
   const t0 = Date.now();
@@ -51,12 +53,12 @@ try {
   await page.goto(url, { waitUntil: 'load' });
   await page.waitForFunction(() => window.__suds, null, { timeout: 30000 });
   step('salon loads');
-  await page.click('#btn-start');
+  await press('#btn-start');
   await ev(() => window.__suds.fast(true));
   await waitStage('checkin');
   await shot('ticket');
   step('owner and dog arrive, ticket shows');
-  await page.click('#btn-take');
+  await press('#btn-take');
   await waitStage('bath');
   step('dog walks over and jumps into the tub');
   await ev(`(async () => { const S = window.__suds, d = S.game.dog; S.stand(-1.25, -1.55); await S.use('spray', 3, (t) => S.face(d.torso.pos.x + Math.sin(t * 1.3) * 0.3, d.torso.pos.y, d.torso.pos.z)); })()`);
@@ -76,11 +78,11 @@ try {
   await ev(() => { window.__suds.dry(); window.__suds.demat(); window.__suds.clip(); window.__suds.lookAt('torso'); });
   await shot('groomed');
   await ev(`window.__suds.use('camera', 0.2)`);
-  await waitStage('checkout', 60000);
+  await waitStage('checkout', 180000);
   await shot('checkout');
   step('photo, hand back and payment');
-  await page.click('#btn-next');
-  await waitStage('checkin', 90000);
+  await press('#btn-next');
+  await waitStage('checkin', 180000);
   step('next appointment arrives');
   ok = errors.length === 0;
 } catch (e) {

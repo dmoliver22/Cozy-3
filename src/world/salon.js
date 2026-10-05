@@ -7,6 +7,7 @@ import {
 import { Pendulum } from '../core/springs.js';
 import { Cloth } from './cloth.js';
 import { Rope } from './rope.js';
+import { QUALITY } from '../core/quality.js';
 
 // Room layout (metres). The player looks at the back wall: tub on the left, grooming table on the right.
 export const ROOM = { x0: -3, x1: 3, z0: -3, z1: 2.6, h: 2.8 };
@@ -221,7 +222,7 @@ export class Salon {
     pave.position.set(x0 - 3.5, -0.05, -0.5);
     this.group.add(pave);
 
-    const N = 700;
+    const N = QUALITY.rain;
     const geo = new THREE.BufferGeometry();
     this.rain = { N, pos: new Float32Array(N * 6), speed: new Float32Array(N) };
     for (let i = 0; i < N; i++) this._resetDrop(i, true);

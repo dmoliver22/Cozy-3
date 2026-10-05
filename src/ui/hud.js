@@ -11,7 +11,7 @@ export class Hud {
       hud: $('hud'), day: $('hud-day'), clock: $('hud-clock'), money: $('hud-money'),
       job: $('job'), jobDog: $('job-dog'), jobReq: $('job-req'), steps: $('job-steps'),
       cross: $('crosshair'), hint: $('hint'), toasts: $('toasts'), prompt: $('prompt'),
-      speech: $('speech'), hotbar: $('hotbar'), guard: $('guard'), flash: $('flash'),
+      speech: $('speech'), hotbar: $('hotbar'), guard: $('guard'), flash: $('flash'), finger: $('finger'),
     };
     this.slots = [];
     this.slotSprings = [];
@@ -91,12 +91,33 @@ export class Hud {
       .join('');
   }
 
-  setHint(text) {
+  // x/y place the hint above a finger (touch); without them it sits under the crosshair.
+  setHint(text, x, y) {
     if (text !== this._hint) {
       this._hint = text;
       this.el.hint.textContent = text || '';
       this.el.hint.classList.toggle('show', !!text);
     }
+    if (x != null) {
+      const w = this.el.hint.offsetWidth || 200;
+      this.el.hint.style.left = `${Math.min(Math.max(x, w / 2 + 8), innerWidth - w / 2 - 8)}px`;
+      this.el.hint.style.top = `${Math.max(8, y)}px`;
+    } else if (this.el.hint.style.left) {
+      this.el.hint.style.left = '';
+      this.el.hint.style.top = '';
+    }
+  }
+
+  setFinger(x, y, hot) {
+    const f = this.el.finger;
+    if (x == null) {
+      f.hidden = true;
+      return;
+    }
+    f.hidden = false;
+    f.style.left = `${x}px`;
+    f.style.top = `${y}px`;
+    f.style.borderColor = hot ? 'rgba(242, 179, 139, 0.95)' : 'rgba(247, 250, 250, 0.9)';
   }
 
   setCrosshair(hot, free) {
