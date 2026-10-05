@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { RigidBody, orientationError } from '../core/rigid.js';
 import { Spring, Pendulum } from '../core/springs.js';
 import { clamp, lerp, mulberry32, smoothstep } from '../core/math.js';
-import { Fur, makeFurView, REGION, OPEN_GROUND } from './fur.js';
+import { Fur, REGION, OPEN_GROUND } from './fur.js';
+import { HairView } from './hair.js';
 import { BREEDS, CUTS } from './breeds.js';
 import { QUALITY } from '../core/quality.js';
 
@@ -347,15 +348,60 @@ export class Dog {
   }
 
   // Grow the coat. Needs a valid pose, so call after place().
-  growFur(furMaterial) {
+  growFur() {
     const B = this.B;
     const parts = this._furParts();
     const cut = CUTS[this.cutKey] ?? CUTS.tidy;
     this.fur = new Fur({ parts, dog: this, breed: B, seed: this.seed, cut });
+    this.fur.spacing = this.furSpacing;
     this.fur.init(this.frames, this.colliders);
-    this.furView = makeFurView(this.fur, furMaterial);
+    this.furView = new HairView(this.fur, { seed: this.seed });
     this.group.add(this.furView.mesh);
-    this.furView.update();
+    this._tintSkin();
+  }
+
+  // The skin under the hair takes a deeper shade of the coat that grows on it, so the gaps between
+  // hairs read as dense underfur rather than bare skin.
+  _tintSkin() {
+    const f = this.fur;
+    const sum = f.partNames.map(() => [0, 0, 0, 0, 0]);
+    for (let s = 0; s < f.S; s++) {
+      const a = sum[f.partId[s]];
+      a[0] += f.color[s * 3];
+      a[1] += f.color[s * 3 + 1];
+      a[2] += f.color[s * 3 + 2];
+      a[3] += f.natLen[s];
+      a[4]++;
+    }
+    // Deep coats are dark down at the skin; short coats show nearly their own colour.
+    const colorOf = (name) => {
+      const a = sum[f.partNames.indexOf(name)];
+      if (!a || !a[4]) return null;
+      const depth = Math.min(1, a[3] / a[4] / 0.08);
+      return new THREE.Color(a[0] / a[4], a[1] / a[4], a[2] / a[4]).multiplyScalar(0.88 - 0.4 * depth);
+    };
+    this.skinMats = [];
+    const tint = (mesh, name) => {
+      const c = colorOf(name);
+      if (!c) return;
+      const m = this.skinMat.clone();
+      m.color.copy(c);
+      m.userData.base = c.clone();
+      mesh.material = m;
+      this.skinMats.push(m);
+    };
+    tint(this.vTorso, 'torso');
+    tint(this.vHeadMesh, 'head');
+    tint(this.vSnout, 'snout');
+    tint(this.vNeck, 'neck');
+    this.legs.forEach((L, i) => {
+      const [u, l, p] = this.vLegs[i];
+      tint(u, L.name + '_u');
+      tint(l, L.name + '_l');
+      tint(p, L.name + '_l');
+    });
+    for (const m of this.vTail) tint(m, 'tail');
+    for (const side of this.vEars) for (const m of side) tint(m, 'ear');
   }
 
   _furParts() {
@@ -383,6 +429,8 @@ export class Dog {
     for (const [a, b] of legA) total += a + b;
     const N = Math.round(B.fur.count * QUALITY.fur);
     const cnt = (a) => Math.max(6, Math.round((N * a) / total));
+    // How far apart guide roots are: each one stands for this much skin.
+    this.furSpacing = Math.sqrt(total / N);
 
     const F = B.fur;
     const silky = F.type === 'silky', wiry = F.type === 'wiry';
@@ -513,7 +561,6 @@ export class Dog {
   _buildVisuals() {
     const B = this.B;
     const skinCol = new THREE.Color(this.colorway ? new THREE.Color(this.colorway).multiplyScalar(0.85) : B.skin);
-    this.skinBase = skinCol.clone();
     this.skinMat = new THREE.MeshStandardMaterial({ color: skinCol, roughness: 0.85 });
     const dark = new THREE.MeshStandardMaterial({ color: 0x1d1a1a, roughness: 0.18, metalness: 0.0 });
     const shine = new THREE.MeshBasicMaterial({ color: 0xffffff });
@@ -528,11 +575,11 @@ export class Dog {
     this.vTorso = mk();
     this.vHead = new THREE.Group();
     this.group.add(this.vHead);
-    const headMesh = new THREE.Mesh(skinGeo, this.skinMat);
+    const headMesh = (this.vHeadMesh = new THREE.Mesh(skinGeo, this.skinMat));
     headMesh.scale.set(...B.head.r);
     headMesh.castShadow = true;
     this.vHead.add(headMesh);
-    const snout = new THREE.Mesh(skinGeo, this.skinMat);
+    const snout = (this.vSnout = new THREE.Mesh(skinGeo, this.skinMat));
     snout.scale.set(...B.snout.r);
     snout.position.set(...B.snout.at);
     snout.castShadow = true;
@@ -1186,7 +1233,7 @@ export class Dog {
       const st = this._statsCache;
       const dirt = st ? 1 - st.clean : 0;
       const wet = st ? st.wetAvg : 0;
-      this.skinMat.color.copy(this.skinBase).multiplyScalar(1 - wet * 0.2).lerp(_mud, Math.min(0.8, dirt * 0.7));
+      for (const m of this.skinMats ?? []) m.color.copy(m.userData.base).multiplyScalar(1 - wet * 0.25).lerp(_mud, Math.min(0.8, dirt * 0.7));
       this.furView.update(ctx.hint);
     }
     this.bow?.update(dt, this);
@@ -1328,6 +1375,7 @@ export class Dog {
   dispose() {
     this.furView?.dispose();
     this.skinMat.dispose();
+    for (const m of this.skinMats ?? []) m.dispose();
     this.group.removeFromParent();
   }
 }

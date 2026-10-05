@@ -97,7 +97,7 @@ export function installDebug(game) {
       const dog = new Dog({ breedKey, seed: 42, cutKey, name: 'Lab' });
       const st = where === 'tub' ? STATIONS.tub : STATIONS.table;
       dog.place(st.x, st.y, st.z, where === 'tub' ? Math.PI / 2 : -Math.PI / 2, where === 'tub' ? SUPPORTS.tub : SUPPORTS.table);
-      dog.growFur(game.furMaterial);
+      dog.growFur();
       dog.windAt = game.tools.windAt;
       dog.onEvent = (t, d) => game._dogEvent(t, d);
       game.scene.add(dog.group);

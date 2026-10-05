@@ -8,6 +8,7 @@ import { Tools, TOOL_DEFS } from '../tools/tools.js';
 import { Dog } from '../dog/dog.js';
 import { Bow } from '../dog/bow.js';
 import { makeFurMaterial, REGION } from '../dog/fur.js';
+import { setHairPixelScale, setHairDensity, hairDensity } from '../dog/hair.js';
 import { BREEDS, CUTS, BOW_COLORS, DOG_NAMES, OWNERS, TEMPERAMENTS, NOTES, GUARDS } from '../dog/breeds.js';
 import { Water, Gel } from '../fx/water.js';
 import { Bubbles } from '../fx/bubbles.js';
@@ -123,7 +124,7 @@ export class Game {
   }
 
   // ------------------------------------------------------------------
-  // Keep the frame rate up on modest GPUs by trading resolution, a step at a time.
+  // Keep the frame rate up on modest GPUs by trading resolution and hair density, a step at a time.
   _adaptResolution(dt) {
     if (this.skipRender || this.stage === 'title') return;
     this._frameEma = (this._frameEma ?? 0.016) * 0.95 + Math.min(dt, 0.2) * 0.05;
@@ -132,11 +133,18 @@ export class Game {
     this._adaptTimer = 0;
     const max = Math.min(window.devicePixelRatio || 1, QUALITY.maxDpr);
     let pr = this.renderer.getPixelRatio();
-    if (this._frameEma > 0.028 && pr > 0.6) pr = Math.max(0.6, pr * 0.85);
-    else if (this._frameEma < 0.018 && pr < max) pr = Math.min(max, pr * 1.1);
-    else return;
-    this.renderer.setPixelRatio(pr);
-    this._resize();
+    const hd = hairDensity();
+    if (this._frameEma > 0.028) {
+      if (hd > 0.35) setHairDensity(hd * 0.85);
+      if (pr > 0.6) pr = Math.max(0.6, pr * 0.88);
+    } else if (this._frameEma < 0.018) {
+      if (hd < 1) setHairDensity(hd * 1.1);
+      if (pr < max) pr = Math.min(max, pr * 1.1);
+    } else return;
+    if (pr !== this.renderer.getPixelRatio()) {
+      this.renderer.setPixelRatio(pr);
+      this._resize();
+    }
   }
 
   _resize() {
@@ -145,6 +153,7 @@ export class Game {
     this.camera.aspect = w / h;
     this.camera.fov = w / h < 0.8 ? 82 : 70;
     this.camera.updateProjectionMatrix();
+    setHairPixelScale(this.camera, this.renderer.domElement.height);
   }
 
   _bindUI() {
@@ -278,7 +287,7 @@ export class Game {
   _spawnTitleDog() {
     const dog = new Dog({ breedKey: 'sheepdog', seed: 7, cutKey: 'teddy', name: 'Biscuit' });
     dog.place(0.4, 0, -0.75, -0.35);
-    dog.growFur(this.furMaterial);
+    dog.growFur();
     dog.windAt = this.tools.windAt;
     this.scene.add(dog.group);
     this.dog = dog;
@@ -380,7 +389,7 @@ export class Game {
     this.hud.setJob(A.name, `${A.cut.name}${A.bow ? ` · ${A.bow.name} bow` : ''}`);
     const dog = new Dog({ breedKey: A.breedKey, seed: A.seed, cutKey: A.cutKey, name: A.name });
     dog.place(STATIONS.outside.x - 0.3, 0, STATIONS.outside.z, Math.PI);
-    dog.growFur(this.furMaterial);
+    dog.growFur();
     dog.windAt = this.tools.windAt;
     dog.onEvent = (t, d) => this._dogEvent(t, d);
     this.dogFear = {

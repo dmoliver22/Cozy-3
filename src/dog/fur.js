@@ -3,16 +3,18 @@ import { clamp01, smoothstep, fbm3, mulberry32 } from '../core/math.js';
 import { SpatialHash } from '../core/spatialHash.js';
 import { QUALITY } from '../core/quality.js';
 
-// Every strand is a root on the skeleton plus K verlet particles (K depends on the coat: long
-// silky hair gets more segments so it can flow). Strands are pulled toward a groomed rest shape
-// whose stiffness depends on how wet/fluffy they are, pushed by wind and water, held together by
-// mat constraints, and collide with the body, the floor they stand on and the tub walls.
+// The coat's physics. Every strand is a root on the skeleton plus K verlet particles (K depends on
+// the coat: long silky hair gets more segments so it can flow). Strands are pulled toward a
+// groomed rest shape whose stiffness depends on how wet/fluffy they are, pushed by wind and
+// water, held together by mat constraints, and collide with the body, the floor they stand on and
+// the tub walls. These are guide strands: HairView (hair.js) draws a clump of fine hairs around
+// each one, so the whole coat moves with them.
 //
 // Hair types change both the physics and the look:
-//   fluffy  shaggy puffs (sheepdog)          curly   tight springy puffs (poodle, bichon)
+//   fluffy  long shaggy hair (sheepdog)        curly   springy crimped curls (poodle, bichon)
 //   silky   long glossy flowing locks with waves and feathering (golden, shih tzu)
-//   wiry    stiff bristly spikes with beard, brows and leg furnishings (schnauzer)
-//   double  plush stand-up coat over an undercoat that sheds out in clumps (husky, corgi)
+//   wiry    harsh stiff hair with beard, brows and leg furnishings (schnauzer)
+//   double  plush stand-up coat over a soft undercoat that sheds out in clumps (husky, corgi)
 export const DEFAULT_K = 3;
 
 export const REGION = {
@@ -21,8 +23,6 @@ export const REGION = {
 export const REGION_KEYS = Object.keys(REGION);
 export const REGION_NAMES = ['back', 'belly', 'chest', 'rear', 'neck', 'head', 'face', 'ears', 'legs', 'paws', 'tail', 'tail tip', 'eyebrows'];
 export const REGION_COUNT = REGION_KEYS.length;
-
-const SHAPES = { fluffy: 'puff', curly: 'puff', double: 'puff', silky: 'lock', wiry: 'spike' };
 
 const MUD = new THREE.Color('#6a4a2c');
 const MUD_DRY = new THREE.Color('#8a6644');
@@ -46,7 +46,6 @@ export class Fur {
     const fb = breed.fur;
     const K = (this.K = fb.segs ?? DEFAULT_K);
     this.type = fb.type ?? 'fluffy';
-    this.shape = SHAPES[this.type] ?? 'puff';
     this.sDry = fb.stand;
     this.stiff = fb.stiff;
     this.curl = fb.curl;
@@ -96,6 +95,8 @@ export class Fur {
     }
 
     const S = (this.S = tmp.length);
+    this.partNames = [...new Set(tmp.map((d) => d.part))];
+    this.partId = Uint8Array.from(tmp, (d) => this.partNames.indexOf(d.part));
     const NP = (this.NP = S * K);
     this.bone = new Uint8Array(S);
     this.rootLocal = new Float32Array(S * 3);
@@ -148,9 +149,9 @@ export class Fur {
       let [gx, gy, gz] = d.G;
       let gl = Math.hypot(gx, gy, gz) || 1;
       gx /= gl; gy /= gl; gz /= gl;
-      // Locks and bristles that are groomed into the skin lie along it instead, so the strand
-      // is not forever pulled inside the body and pushed back out (which parts the coat).
-      if (this.shape !== 'puff') {
+      // Hair groomed into the skin lies along it instead, so the strand is not forever pulled
+      // inside the body and pushed back out (which parts the coat).
+      {
         const [nx, ny, nz] = d.N;
         const dn = gx * nx + gy * ny + gz * nz;
         if (dn < 0) {
@@ -346,13 +347,15 @@ export class Fur {
         (1 + this.lather[s] * 0.35) * (1 + shed * 0.22);
 
       const mw = (this.messy[s] * 0.5 + shed * 0.25) * (1 - wet * 0.6);
+      const shortK = smoothstep(0.015, 0.045, this.natLen[s]);
       const seg = this.len[s] / K;
       const s3 = s * 3;
       let ax = 0, ay = 0, az = 0;
       for (let k = 0; k < K; k++) {
         const ph = this.phase[s] + k * waveStep;
         // Curls spring back when dry; waves stay a little even when wet.
-        const amp = curl * (silky ? 0.45 + 0.55 * dry : dry);
+        // (Short hair on faces and paws stays straight.)
+        const amp = curl * (silky ? 0.45 + 0.55 * dry : dry) * shortK;
         const cc = Math.cos(ph) * amp, ss = Math.sin(ph) * amp;
         // Bend from "standing out" at the root toward the groom direction at the tip.
         const so = sOut * (1 - (k / Math.max(1, K - 1)) * 0.25);
@@ -935,316 +938,27 @@ const _tgt = [0, 0, 0];
 const CLEAN_WEIGHT = [1, 0.5, 1, 1, 1, 1, 0.8, 0.8, 0.7, 0.4, 0.8, 0.8, 0.8];
 
 // ----------------------------------------------------------------------
-// Rendering: one instance per strand segment, stretched root→tip: puffs for fluffy coats and
-// pointed bristles for wiry ones. Silky coats draw as continuous ribbons (LockView).
-// `ribbon` makes the variant for silky locks: colours, tangents and the rest come per vertex,
-// and both faces render because a lock can flip over in the wind.
-export function makeFurMaterial({ ribbon = false } = {}) {
-  const mat = new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0, color: 0xffffff, vertexColors: ribbon, side: ribbon ? THREE.DoubleSide : THREE.FrontSide });
+// Coats are drawn by HairView (hair.js). This soft, cloud-shaded material is for the loose bits:
+// clipped tufts and the undercoat that drifts out of a shedding coat.
+export function makeFurMaterial() {
+  const mat = new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0, color: 0xffffff });
   mat.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader
-      .replace(
-        '#include <common>',
-        `#include <common>\nattribute float aWet;\nattribute float aGloss;\nattribute vec3 aN;\n${ribbon ? 'attribute vec3 aTan;\n' : ''}varying float vWet;\nvarying float vGloss;\nvarying vec3 vTangent;`
-      )
-      .replace(
-        '#include <begin_vertex>',
-        `#include <begin_vertex>
-        vWet = aWet;
-        vGloss = aGloss;
-        ${ribbon ? 'vTangent = normalize(mat3(modelViewMatrix) * aTan);' : `#ifdef USE_INSTANCING
-          vTangent = normalize(mat3(modelViewMatrix) * instanceMatrix[1].xyz);
-        #else
-          vTangent = vec3(0.0, 1.0, 0.0);
-        #endif`}`
-      )
-      // Soft "cloud" shading: lean each puff's normal toward its strand's outward normal.
-      // Silky locks keep more of their own shape so individual locks read.
-      .replace(
-        '#include <defaultnormal_vertex>',
-        `#include <defaultnormal_vertex>\ntransformedNormal = normalize(mix(transformedNormal, normalMatrix * aN, ${ribbon ? '0.5' : '0.62 - 0.3 * aGloss'}));`
-      );
+      .replace('#include <common>', '#include <common>\nattribute float aWet;\nattribute vec3 aN;\nvarying float vWet;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWet = aWet;')
+      // Lean each puff's normal toward its outward normal so a clump shades like one soft blob.
+      .replace('#include <defaultnormal_vertex>', '#include <defaultnormal_vertex>\ntransformedNormal = normalize(mix(transformedNormal, normalMatrix * aN, 0.62));');
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying float vWet;\nvarying float vGloss;\nvarying vec3 vTangent;')
+      .replace('#include <common>', '#include <common>\nvarying float vWet;')
       .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 0.32, vWet);')
       .replace(
         '#include <opaque_fragment>',
         `{
           float rim = pow(1.0 - saturate(dot(normalize(vViewPosition), normal)), 2.2);
           outgoingLight += diffuseColor.rgb * (0.10 + rim * 0.38) * (1.0 - vWet * 0.7);
-          outgoingLight += vec3(rim * 0.12 * vWet);
-          // Hair sheen (Kajiya-Kay): a bright band across the strands plus a coloured second lobe.
-          if (vGloss > 0.002) {
-            vec3 T = normalize(vTangent);
-            vec3 V = normalize(vViewPosition);
-            vec3 L = normalize((viewMatrix * vec4(-0.7, 0.62, 0.35, 0.0)).xyz);
-            vec3 H = normalize(L + V);
-            float th = dot(T, H);
-            float s1 = pow(sqrt(max(0.0, 1.0 - th * th)), 70.0);
-            vec3 T2 = normalize(T + normal * 0.3);
-            float th2 = dot(T2, H);
-            float s2 = pow(sqrt(max(0.0, 1.0 - th2 * th2)), 28.0);
-            float lit = saturate(dot(normal, L) * 0.6 + 0.4);
-            vec3 tint = mix(vec3(1.0, 0.96, 0.88), diffuseColor.rgb * 1.5, 0.45);
-            outgoingLight += (tint * s1 * 0.26 + diffuseColor.rgb * s2 * 0.3) * vGloss * lit;
-          }
         }
         #include <opaque_fragment>`
       );
   };
   return mat;
-}
-
-// Base shapes. Y runs root→tip along a segment.
-function spikeGeometry() {
-  // A bristle: thick at the base, sharp at the tip.
-  const g = new THREE.SphereGeometry(1, 6, 5);
-  const p = g.attributes.position;
-  for (let i = 0; i < p.count; i++) {
-    const y = p.getY(i);
-    const k = Math.pow(1 - (y + 1) / 2, 0.85) * 0.92 + 0.08;
-    p.setX(i, p.getX(i) * k);
-    p.setZ(i, p.getZ(i) * k);
-  }
-  g.computeVertexNormals();
-  return g;
-}
-
-let ribbonMaterial = null;
-
-// Pick the renderer for a coat: silky coats are continuous ribbons, the rest instanced shapes.
-export function makeFurView(fur, material) {
-  if (fur.shape === 'lock') return new LockView(fur, (ribbonMaterial ??= makeFurMaterial({ ribbon: true })));
-  return new FurView(fur, material);
-}
-
-// Silky coats: every strand is one continuous tapered ribbon through its particles, rebuilt each
-// frame, with a raised crest so each lock shades round. Long hair flows without the beading of
-// per-segment shapes, and a lock that flips over in the wind still shows its underside.
-export class LockView {
-  constructor(fur, material) {
-    this.fur = fur;
-    const S = fur.S, K = fur.K, R = K + 1;
-    const V = S * R * 3;
-    this.R = R;
-    const geo = new THREE.BufferGeometry();
-    const attr = (n, size) => {
-      const a = new THREE.BufferAttribute(new Float32Array(n * size), size);
-      a.setUsage(THREE.DynamicDrawUsage);
-      return a;
-    };
-    this.posA = attr(V, 3);
-    this.norA = attr(V, 3);
-    this.colA = attr(V, 3);
-    this.tanA = attr(V, 3);
-    this.nA = attr(V, 3);
-    this.wetA = attr(V, 1);
-    this.glossA = attr(V, 1);
-    geo.setAttribute('position', this.posA);
-    geo.setAttribute('normal', this.norA);
-    geo.setAttribute('color', this.colA);
-    geo.setAttribute('aTan', this.tanA);
-    geo.setAttribute('aN', this.nA);
-    geo.setAttribute('aWet', this.wetA);
-    geo.setAttribute('aGloss', this.glossA);
-    const idx = new Uint32Array(S * K * 12);
-    let o = 0;
-    for (let s = 0; s < S; s++) {
-      for (let j = 0; j < K; j++) {
-        const a = (s * R + j) * 3, b = a + 3;
-        // left-crest and crest-right quads between ring j and j+1
-        idx.set([a, b, a + 1, a + 1, b, b + 1, a + 1, b + 1, a + 2, a + 2, b + 1, b + 2], o);
-        o += 12;
-      }
-    }
-    geo.setIndex(new THREE.BufferAttribute(idx, 1));
-    this.mesh = new THREE.Mesh(geo, material);
-    this.mesh.frustumCulled = false;
-    this.mesh.castShadow = true;
-    this.mesh.receiveShadow = true;
-    this.col = [0, 0, 0];
-    // Lock outline (root → tip): gathered at the root, fullest a third of the way, then a long
-    // taper to a fine point.
-    this.width = new Float32Array(R);
-    for (let j = 0; j < R; j++) {
-      const u = j / K;
-      this.width[j] = u < 0.3 ? 0.6 + 0.4 * smoothstep(0, 0.3, u) : 1 - 0.92 * Math.pow((u - 0.3) / 0.7, 1.4);
-    }
-    // Short hair gets slimmer locks so a smooth head doesn't turn into scales.
-    this.maxW = new Float32Array(fur.S);
-    for (let s = 0; s < fur.S; s++) this.maxW[s] = fur.natLen[s] * (fur.natLen[s] < 0.03 ? 0.26 : 0.16);
-  }
-
-  update(hint = false) {
-    const fur = this.fur;
-    const K = fur.K, R = this.R;
-    const P = this.posA.array, Nn = this.norA.array, C = this.colA.array, T = this.tanA.array, NN = this.nA.array;
-    const W = this.wetA.array, G = this.glossA.array;
-    const pos = fur.pos, root = fur.rootPos, rn = fur.rootN;
-    const col = this.col, width = this.width;
-    const pts = _pts;
-    for (let s = 0; s < fur.S; s++) {
-      fur.strandColor(s, hint, col);
-      const gloss = fur.glossOf(s);
-      const wet = fur.wet[s];
-      const r = fur.radius[s];
-      const nx0 = rn[s * 3], ny0 = rn[s * 3 + 1], nz0 = rn[s * 3 + 2];
-      pts[0] = root[s * 3]; pts[1] = root[s * 3 + 1]; pts[2] = root[s * 3 + 2];
-      for (let k = 0; k < K; k++) {
-        const i3 = (s * K + k) * 3;
-        pts[(k + 1) * 3] = pos[i3]; pts[(k + 1) * 3 + 1] = pos[i3 + 1]; pts[(k + 1) * 3 + 2] = pos[i3 + 2];
-      }
-      // Side vector from the previous ring when a lock points straight out of the skin.
-      let bx = 1, by = 0, bz = 0;
-      for (let j = 0; j < R; j++) {
-        const j0 = Math.max(0, j - 1) * 3, j1 = Math.min(K, j + 1) * 3, jc = j * 3;
-        let tx = pts[j1] - pts[j0], ty = pts[j1 + 1] - pts[j0 + 1], tz = pts[j1 + 2] - pts[j0 + 2];
-        const tl = Math.sqrt(tx * tx + ty * ty + tz * tz) || 1e-6;
-        tx /= tl; ty /= tl; tz /= tl;
-        // B = T x N0 lies along the skin, across the lock; F = B x T faces outward.
-        let cx = ty * nz0 - tz * ny0, cy = tz * nx0 - tx * nz0, cz = tx * ny0 - ty * nx0;
-        const cl = Math.sqrt(cx * cx + cy * cy + cz * cz);
-        if (cl > 0.08) { bx = cx / cl; by = cy / cl; bz = cz / cl; }
-        let fx = by * tz - bz * ty, fy = bz * tx - bx * tz, fz = bx * ty - by * tx;
-        const fl = Math.sqrt(fx * fx + fy * fy + fz * fz) || 1;
-        fx /= fl; fy /= fl; fz /= fl;
-        const w = Math.min(r * 0.34, this.maxW[s]) * width[j];
-        const crest = w * 0.3;
-        const px = pts[jc], py = pts[jc + 1], pz = pts[jc + 2];
-        const v = (s * R + j) * 9;
-        P[v] = px - bx * w; P[v + 1] = py - by * w; P[v + 2] = pz - bz * w;
-        P[v + 3] = px + fx * crest; P[v + 4] = py + fy * crest; P[v + 5] = pz + fz * crest;
-        P[v + 6] = px + bx * w; P[v + 7] = py + by * w; P[v + 8] = pz + bz * w;
-        // Rounded cross-section: edge normals lean out sideways.
-        let ex = fx * 0.55 - bx, ey = fy * 0.55 - by, ez = fz * 0.55 - bz;
-        let el = Math.sqrt(ex * ex + ey * ey + ez * ez) || 1;
-        Nn[v] = ex / el; Nn[v + 1] = ey / el; Nn[v + 2] = ez / el;
-        Nn[v + 3] = fx; Nn[v + 4] = fy; Nn[v + 5] = fz;
-        ex = fx * 0.55 + bx; ey = fy * 0.55 + by; ez = fz * 0.55 + bz;
-        el = Math.sqrt(ex * ex + ey * ey + ez * ez) || 1;
-        Nn[v + 6] = ex / el; Nn[v + 7] = ey / el; Nn[v + 8] = ez / el;
-        // Shadowed near the skin, sun-bleached at the tips: gives the layers depth.
-        const u = j / K;
-        const shade = 0.84 + 0.22 * u;
-        const cr = col[0] * shade, cg = col[1] * shade, cb = col[2] * shade;
-        // Outward normal for the soft "cloud" blend, bent toward the lock direction.
-        let qx = nx0 + tx * u * 0.7, qy = ny0 + ty * u * 0.7, qz = nz0 + tz * u * 0.7;
-        const ql = Math.sqrt(qx * qx + qy * qy + qz * qz) || 1;
-        qx /= ql; qy /= ql; qz /= ql;
-        for (let e = 0; e < 3; e++) {
-          const q = v + e * 3;
-          C[q] = cr; C[q + 1] = cg; C[q + 2] = cb;
-          T[q] = tx; T[q + 1] = ty; T[q + 2] = tz;
-          NN[q] = qx; NN[q + 1] = qy; NN[q + 2] = qz;
-          const vi = (s * R + j) * 3 + e;
-          W[vi] = wet;
-          G[vi] = gloss;
-        }
-      }
-    }
-    for (const a of [this.posA, this.norA, this.colA, this.tanA, this.nA, this.wetA, this.glossA]) a.needsUpdate = true;
-  }
-
-  dispose() {
-    this.mesh.geometry.dispose();
-  }
-}
-const _pts = new Float32Array(3 * 16);
-
-export class FurView {
-  constructor(fur, material) {
-    this.fur = fur;
-    const shape = fur.shape;
-    const geo = shape === 'spike' ? spikeGeometry() : new THREE.IcosahedronGeometry(1, 1);
-    this.wetAttr = new THREE.InstancedBufferAttribute(new Float32Array(fur.NP), 1);
-    this.wetAttr.setUsage(THREE.DynamicDrawUsage);
-    geo.setAttribute('aWet', this.wetAttr);
-    this.glossAttr = new THREE.InstancedBufferAttribute(new Float32Array(fur.NP), 1);
-    this.glossAttr.setUsage(THREE.DynamicDrawUsage);
-    geo.setAttribute('aGloss', this.glossAttr);
-    this.nAttr = new THREE.InstancedBufferAttribute(new Float32Array(fur.NP * 3), 3);
-    this.nAttr.setUsage(THREE.DynamicDrawUsage);
-    geo.setAttribute('aN', this.nAttr);
-    this.mesh = new THREE.InstancedMesh(geo, material, fur.NP);
-    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    this.mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(fur.NP * 3), 3);
-    this.mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
-    this.mesh.frustumCulled = false;
-    this.mesh.castShadow = true;
-    this.mesh.receiveShadow = true;
-    this.col = [0, 0, 0];
-    // Cross-section and overlap per shape.
-    if (shape === 'spike') this.shapeK = { w: 0.6, t: 0.6, len: 0.72, taper: 0.2, outward: true, lift: 0.03 };
-    else this.shapeK = { w: 1, t: 0.85, len: 0.66, taper: 0.3, outward: false, lift: 0.04 };
-  }
-
-  update(hint = false) {
-    const fur = this.fur;
-    const K = fur.K;
-    const SK = this.shapeK;
-    const M = this.mesh.instanceMatrix.array;
-    const Cc = this.mesh.instanceColor.array;
-    const W = this.wetAttr.array;
-    const GL = this.glossAttr.array;
-    const NN = this.nAttr.array;
-    const pos = fur.pos, root = fur.rootPos, rn = fur.rootN;
-    const kd = Math.max(1, K - 1);
-    for (let s = 0; s < fur.S; s++) {
-      fur.strandColor(s, hint, this.col);
-      const gloss = fur.glossOf(s);
-      const r = fur.radius[s];
-      const nx0 = rn[s * 3], ny0 = rn[s * 3 + 1], nz0 = rn[s * 3 + 2];
-      let ax = root[s * 3], ay = root[s * 3 + 1], az = root[s * 3 + 2];
-      for (let k = 0; k < K; k++) {
-        const i = s * K + k;
-        const i3 = i * 3;
-        const bx = pos[i3], by = pos[i3 + 1], bz = pos[i3 + 2];
-        let yx = bx - ax, yy = by - ay, yz = bz - az;
-        const L = Math.sqrt(yx * yx + yy * yy + yz * yz) || 1e-5;
-        yx /= L; yy /= L; yz /= L;
-        // X ⟂ Y. Locks and bristles lie flat against the coat (X across the outward normal);
-        // puffs just use world up.
-        let xx, xy, xz;
-        if (SK.outward) {
-          xx = yy * nz0 - yz * ny0; xy = yz * nx0 - yx * nz0; xz = yx * ny0 - yy * nx0;
-          if (xx * xx + xy * xy + xz * xz < 1e-4) { xx = yz; xy = 0; xz = -yx; }
-        } else if (Math.abs(yy) < 0.9) { xx = yz; xy = 0; xz = -yx; } else { xx = 0; xy = -yz; xz = yy; }
-        const xl = Math.sqrt(xx * xx + xy * xy + xz * xz) || 1;
-        xx /= xl; xy /= xl; xz /= xl;
-        const zx = xy * yz - xz * yy, zy = xz * yx - xx * yz, zz = xx * yy - xy * yx;
-        const rk = r * (1 - (SK.taper * k) / kd);
-        const sw = rk * SK.w, st = rk * SK.t;
-        const sy = Math.max(L * SK.len, rk * 0.9);
-        const o = i * 16;
-        M[o] = xx * sw; M[o + 1] = xy * sw; M[o + 2] = xz * sw; M[o + 3] = 0;
-        M[o + 4] = yx * sy; M[o + 5] = yy * sy; M[o + 6] = yz * sy; M[o + 7] = 0;
-        M[o + 8] = zx * st; M[o + 9] = zy * st; M[o + 10] = zz * st; M[o + 11] = 0;
-        M[o + 12] = (ax + bx) * 0.5; M[o + 13] = (ay + by) * 0.5; M[o + 14] = (az + bz) * 0.5; M[o + 15] = 1;
-        // Tips are a touch lighter: sun-bleached ends.
-        const lift = 1 + (k / kd) * SK.lift * 2;
-        Cc[i3] = this.col[0] * lift;
-        Cc[i3 + 1] = this.col[1] * lift;
-        Cc[i3 + 2] = this.col[2] * lift;
-        W[i] = fur.wet[s];
-        GL[i] = gloss;
-        // Outward normal, bent a little toward where the lock points.
-        const bend = (k / kd) * 0.7;
-        let qx = nx0 + yx * bend, qy = ny0 + yy * bend, qz = nz0 + yz * bend;
-        const ql = Math.sqrt(qx * qx + qy * qy + qz * qz) || 1;
-        NN[i3] = qx / ql;
-        NN[i3 + 1] = qy / ql;
-        NN[i3 + 2] = qz / ql;
-        ax = bx; ay = by; az = bz;
-      }
-    }
-    this.mesh.instanceMatrix.needsUpdate = true;
-    this.mesh.instanceColor.needsUpdate = true;
-    this.wetAttr.needsUpdate = true;
-    this.glossAttr.needsUpdate = true;
-    this.nAttr.needsUpdate = true;
-  }
-
-  dispose() {
-    this.mesh.geometry.dispose();
-  }
 }

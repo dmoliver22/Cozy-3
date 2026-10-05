@@ -241,15 +241,15 @@ export const BREEDS = {
     // Long, wavy, glossy top coat that lies flat, with feathering on legs, belly, chest and tail.
     fur: {
       type: 'silky', segs: 4,
-      len: 0.08, count: 1500, puff: 0.027, curl: 0.2, waveStep: 1.25, stiff: 0.13, stand: 0.05, gloss: 0.9, feather: 1.2,
-      regions: { tail: 1.7, tailtip: 2.0, chest: 1.6, neck: 1.45, belly: 1.6, rear: 1.4, legs: 0.7, ears: 0.7, face: 0.16, headtop: 0.26, paws: 0.4 },
+      len: 0.08, count: 1500, puff: 0.027, curl: 0.2, waveStep: 1.25, stiff: 0.13, stand: 0.16, gloss: 0.9, feather: 1.2,
+      regions: { tail: 1.7, tailtip: 2.0, chest: 1.6, neck: 1.45, belly: 1.6, rear: 1.4, legs: 0.7, ears: 0.7, face: 0.13, headtop: 0.2, paws: 0.4 },
     },
     dirt: 0.9,
     mats: 4,
     bark: 0.85,
     cuts: ['tidy', 'feathers', 'feathers'],
     coat(part, P, region, rng) {
-      const gold = col('#c8873c'), light = col('#e2b571'), deep = col('#a8642a');
+      const gold = col('#bf7a33'), light = col('#d9a560'), deep = col('#9c5a24');
       if ([R.chest, R.belly, R.tail, R.tailtip].includes(region)) return vary(mix(gold, light, 0.5 + rng() * 0.2), rng);
       if (region === R.legs || region === R.paws) return vary(mix(gold, light, 0.35), rng);
       if (region === R.ears) return vary(mix(gold, deep, 0.35), rng);

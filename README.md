@@ -10,11 +10,12 @@ Every bit of motion is simulated rather than keyframed:
 
 | What moves | How |
 | --- | --- |
-| Fur | 1,000–1,500 strands per dog, each a chain of verlet particles rooted on the skeleton. Strands are pulled toward a groomed rest shape whose stiffness and "stand-out" depend on how wet, muddy, matted and blow-dried they are, so a soaked coat clings and drips and a dried one springs up into volume. |
-| Hair types | **Fluffy** and **curly** coats are clouds of puffs. **Silky** coats (golden retriever, shih tzu) are long, wavy, glossy locks drawn as continuous ribbons that flow, cling when wet and shine when brushed. **Wiry** coats (schnauzer) are stiff bristles with a beard, eyebrows and leg furnishings. **Double** coats (husky, corgi) stand off the body over an undercoat you blow out with the dryer and brush out in drifting clumps. |
+| Fur | 1,000–1,500 guide strands per dog, each a chain of verlet particles rooted on the skeleton. Strands are pulled toward a groomed rest shape whose stiffness and "stand-out" depend on how wet, muddy, matted and blow-dried they are, so a soaked coat clings and drips and a dried one springs up into volume. |
+| Hair | Around every guide the GPU grows a clump of fine hairs (25,000–50,000 per dog on a desktop, fewer on phones) that follow the guide's simulated curve with their own waves, length and lift. Dry, blow-dried hair fans apart; wet, soapy or muddy hair gathers into points. Hair is lit as hair: dark down by the skin, a sheen running along the strands, light glowing through backlit tips. |
+| Hair types | **Fluffy** (sheepdog, pomeranian) is long and shaggy, **curly** (poodle, bichon) springy and crimped, **silky** (golden retriever, shih tzu) long, wavy and glossy, falling into locks. **Wiry** (schnauzer) is harsh with a beard, eyebrows and leg furnishings. **Double** coats (husky, corgi) stand off the body over a soft, crimped undercoat you blow out with the dryer and brush out in drifting clumps. |
 | The dog | Torso and head are rigid bodies held up by PD "muscles"; the neck is a spring joint. Legs are verlet knees with IK, and paws plant and step on their own when the body moves, so walking, turning and the proud shake are all physical. Jumps are real ballistic leaps whose height is worked out so the folded paws clear the tub rim or table edge; to get out of the tub the dog puts its front paws up on the rim first. Tail and ears are verlet chains; wagging drives the tail's rest pose and the hips wiggle along. |
 | Water | Ballistic droplets that soak and rinse the fur they touch, pick up mud, trickle down the coat and tint the runoff in the tub. |
-| Bubbles, clippings | Bubbles cling to lather then float on buoyancy and dryer wind and pop. Clipped tufts flutter down with heavy drag, pile up, and scatter when the dryer catches them. |
+| Bubbles, clippings | Bubbles cling to lather then float on buoyancy and dryer wind and pop. Snipped locks of hair flutter down with heavy drag, settle flat, and scatter when the dryer catches them. |
 | The salon | The towel is a cloth sim; the hoses are verlet ropes plugged into the grip of the sprayer and dryer that drape over the tub rim and rest on the floor; lamps, the door bell and every polaroid swing on pendulums, fairy lights sag and sway, the door closes on a damped spring, coins bounce into the tip jar. |
 | Even the UI | Tools sway and reach on springs, toasts and the hotbar bounce, tickets drop in. |
 
@@ -54,8 +55,9 @@ npm run dev        # http://localhost:5173
 | Stick | Walk (optional: the view glides to the tub, table and lobby by itself) |
 | Tap things | Treat jar, service bell, radio, catalogue; the coin chip opens the catalogue too. With the camera out, tap anywhere to take the photo |
 
-Phones get a lighter quality tier (fewer but puffier fur strands, smaller shadows, less rain), the
-render resolution adapts to keep the frame rate up, and Android phones buzz on clips, mats and photos.
+Phones get a lighter quality tier (fewer fur strands and hairs, smaller shadows, less rain), the
+render resolution and hair density adapt to keep the frame rate up, and Android phones buzz on clips,
+mats and photos.
 
 ### The loop
 
@@ -79,7 +81,8 @@ Progress, upgrades and the last twelve polaroids are saved in the browser.
 ```
 src/
   core/      springs, rigid bodies, spatial hash, input
-  dog/       breeds & cuts, Dog (skeleton physics + behaviour), Fur (strand sim, grooming ops, rendering), Bow
+  dog/       breeds & cuts, Dog (skeleton physics + behaviour), Fur (guide strand sim, grooming ops),
+             HairView (GPU hair grown around the guides), Bow
   fx/        water & shampoo gel, bubbles, clipped tufts, sparkles/hearts, coins
   world/     the salon (room, tub, table, window and rain), towel cloth, hose ropes, canvas textures
   tools/     tool viewmodels and what each tool does to the coat
