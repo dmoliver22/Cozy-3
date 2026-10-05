@@ -1,15 +1,15 @@
 import * as THREE from 'three';
 import { QUALITY } from '../core/quality.js';
 
-// Short dense fur on the skin itself (shell texturing): the skin mesh is drawn a few more times,
-// each layer pushed a little further out along the normal and combed along the coat, and each
-// layer only keeps the pixels where a hair is still there at that height. Hairs are procedural
-// (random fibres in a fine 3D grid on the resting skin), thinner and lighter toward their tips,
-// darker down at the skin. This is what makes faces, legs and short coats read as fur, while the
-// long hair grows from the guide strands on top.
+// Short dense fur on the skin itself (shell texturing): the skin mesh is drawn a dozen more times,
+// each layer pushed a little further out and leaning over along the coat, and each layer keeps
+// only the pixels where a hair still reaches that high. Hairs are procedural (fibres in a fine 3D
+// grid on the resting skin), so every hair is a slanted line through the layers: seen from above,
+// a short coat reads as hair lying flat in the way it grows, not as dots on skin. Hairs taper
+// toward their tips and are darker down at the roots.
 //
-// Needs two attributes on the geometry: aFurLen (how tall the short fur is, m) and aComb (the way
-// the coat lies, in the mesh's own space).
+// Needs two attributes on the geometry: aFurLen (length of the short fur, m) and aComb (the way the
+// coat lies, in the mesh's own space, scaled by how far it leans over: 1 flat, 0 upright).
 
 const SHELL_VERT = /* glsl */ `
 attribute float aFurLen;
@@ -43,8 +43,10 @@ function shellMaterial(base, shell, uniforms) {
         '#include <begin_vertex>',
         `#include <begin_vertex>
         vBase = position;
-        float sh = uShell * aFurLen * (1.0 - 0.6 * uFlat);
-        transformed += normal * sh + aComb * (uShell * uShell * aFurLen * 0.9);
+        // Lying-flat coats lean far over and stand low; a soaked coat lies flatter still.
+        float lean = length(aComb);
+        float up = mix(0.75, 0.3, lean) * (1.0 - 0.5 * uFlat);
+        transformed += normal * (uShell * aFurLen * up) + aComb * (pow(uShell, 1.4) * aFurLen * (1.0 + 0.2 * uFlat));
         vShellT = uShell;`
       );
     shader.fragmentShader = shader.fragmentShader
@@ -53,26 +55,27 @@ function shellMaterial(base, shell, uniforms) {
         '#include <color_fragment>',
         `#include <color_fragment>
         {
-          // Two hairs per cell of a fine 3D grid on the resting skin.
+          // Two hairs per cell of a fine 3D grid on the resting skin, each with its own height,
+          // thinning toward the tip.
           vec3 q = vBase / uCell;
           vec3 id = floor(q), f = fract(q);
-          vec3 h1 = hash33(id), h2 = hash33(id + 17.31);
-          float d1 = length(f - (0.15 + 0.7 * h1)), d2 = length(f - (0.15 + 0.7 * h2));
-          float t = vShellT;
-          // Each hair has its own height; it thins toward the tip.
-          float r1 = 0.36 * (1.0 - 0.75 * t) * step(t, 0.45 + 0.55 * h1.z);
-          float r2 = 0.36 * (1.0 - 0.75 * t) * step(t, 0.45 + 0.55 * h2.z);
-          float a1 = r1 > 0.0 ? 1.0 - smoothstep(r1 - fwidth(d1), r1 + fwidth(d1), d1) : 0.0;
-          float a2 = r2 > 0.0 ? 1.0 - smoothstep(r2 - fwidth(d2), r2 + fwidth(d2), d2) : 0.0;
-          float a = max(a1, a2);
+          float t = vShellT, a = 0.0, jit = 0.0;
+          for (int k = 0; k < 2; k++) {
+            vec3 h = hash33(id + float(k) * 17.31);
+            float d = length(f - (0.15 + 0.7 * h));
+            float r = 0.5 * pow(1.0 - t, 0.5) * step(t, 0.55 + 0.45 * h.z);
+            float fw = fwidth(d);
+            float ak = r > 0.0 ? 1.0 - smoothstep(r - fw, r + fw, d) : 0.0;
+            if (ak > a) { a = ak; jit = h.y; }
+          }
           if (a < 0.02) discard;
           diffuseColor.a *= a;
-          float jit = a1 > a2 ? h1.y : h2.y;
-          diffuseColor.rgb *= (0.5 + 0.55 * t) * (0.88 + 0.24 * jit);
+          // Shadowed down in the pile, lighter toward the tips, a little different hair to hair.
+          diffuseColor.rgb *= (0.8 + 0.35 * t) * (0.88 + 0.24 * jit);
         }`
       );
   };
-  mat.customProgramCacheKey = () => 'dog-shell-1';
+  mat.customProgramCacheKey = () => 'dog-shell-2';
   return mat;
 }
 
@@ -81,7 +84,8 @@ export function addShells(mesh, uniforms, count = QUALITY.shells) {
   const layers = [];
   for (let i = 1; i <= count; i++) {
     const t = i / count;
-    const m = mesh.isSkinnedMesh ? new THREE.SkinnedMesh(mesh.geometry, shellMaterial(mesh.material, t, uniforms)) : new THREE.Mesh(mesh.geometry, shellMaterial(mesh.material, t, uniforms));
+    const mat = shellMaterial(mesh.material, t, uniforms);
+    const m = mesh.isSkinnedMesh ? new THREE.SkinnedMesh(mesh.geometry, mat) : new THREE.Mesh(mesh.geometry, mat);
     if (mesh.isSkinnedMesh) m.bind(mesh.skeleton, mesh.bindMatrix);
     m.frustumCulled = false;
     m.castShadow = false;

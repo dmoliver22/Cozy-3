@@ -49,7 +49,6 @@ uniform highp sampler2D tPos;
 uniform highp sampler2D tAttr;
 uniform float uK;
 uniform float uWidth;
-uniform float uSpacing;
 uniform float uPx;
 uniform vec4 uStyle; // frizz, freq, fan, lock
 uniform float uLoft;
@@ -73,9 +72,12 @@ void growHair() {
   vec4 a0 = texelFetch(tAttr, ivec2(0, row), 0); // colour, wet
   vec4 a1 = texelFetch(tAttr, ivec2(1, row), 0); // root normal, gloss
   vec4 a2 = texelFetch(tAttr, ivec2(2, row), 0); // fan, undercoat left, clump, length vs the coat
+  vec4 a3 = texelFetch(tAttr, ivec2(3, row), 0); // length (m), radius of the clump's patch, skin curvature
   bool under = aRnd.w > 0.0;
   float u = position.x;
-  float len = under ? 0.38 + 0.22 * aRnd.x : 0.74 + 0.26 * aRnd.x;
+  // Short fur gets very uneven lengths so the edges of each clump's patch don't show.
+  float shortK = 1.0 - smoothstep(0.02, 0.05, a3.x);
+  float len = under ? 0.38 + 0.22 * aRnd.x : mix(0.74, 0.4, shortK) + mix(0.26, 0.6, shortK) * aRnd.x;
   float uu = u * len;
 
   // Point on the guide's curve.
@@ -96,10 +98,17 @@ void growHair() {
 
   float wet = a0.w;
   // Blow-dried hairs fan apart toward the tips; wet, soapy or muddy ones gather into points.
-  float spread = 1.0 + uStyle.z * a2.x * uu;
-  spread *= mix(1.0, uStyle.w, smoothstep(0.25, 1.0, uu) * (1.0 - a2.x));
-  spread *= mix(1.0, 0.15, max(wet, a2.z) * smoothstep(0.05, 0.75, uu));
-  vec3 p = c + (T1 * aOff.x + T2 * aOff.y) * (uSpacing * spread);
+  // Short fur (faces, paws, smooth coats) does neither: it stays a flat, even pile.
+  float longK = smoothstep(0.02, 0.06, a3.x);
+  float spread = 1.0 + uStyle.z * a2.x * uu * longK;
+  spread *= mix(1.0, uStyle.w, smoothstep(0.25, 1.0, uu) * (1.0 - a2.x) * longK);
+  spread *= mix(1.0, 0.15, max(wet, a2.z) * smoothstep(0.05, 0.75, uu) * mix(0.2, 1.0, longK));
+  vec2 o = aOff * (a3.y * spread);
+  vec3 p = c + T1 * o.x + T2 * o.y;
+  // The clump's patch of skin curves away like the skin does, so its outer hairs don't float
+  // above the coat.
+  float lo = length(o);
+  p -= N * clamp(0.25 * a3.z * lo * lo, -0.5 * lo, 0.5 * lo);
   // Hairs don't all lie in one layer: each lifts a little toward its tip, so the coat has depth.
   // Short hair (faces, paws) stays sleek: loft and frizz scale with how long the hair is.
   float lenK = a2.w;
@@ -136,7 +145,8 @@ void growHair() {
   // Colour: shadowed near the skin, a little different hair to hair, sun-bleached tips.
   vec3 col = a0.rgb * (0.82 + 0.26 * fract(aRnd.y * 7.31 + aRnd.z * 3.17));
   if (under) col = mix(col, vec3(0.9, 0.87, 0.82), 0.45);
-  vHairCol = col * mix(0.4, 0.97, smoothstep(0.0, 0.7, u));
+  // Long coats are dark down at the skin; short fur lies on top and barely darkens at the root.
+  vHairCol = col * mix(mix(0.4, 0.84, shortK), 0.97, smoothstep(0.0, 0.7, u));
   vWet = wet;
   vGloss = a1.w;
   vU = u;
@@ -240,25 +250,26 @@ export class HairView {
     // Child hairs: roots scattered evenly over the disc of skin around their guide. Short hair
     // covers less skin per hair, so short-haired guides grow more of them.
     const ref = (this.refLen = fur.breed.fur.len);
+    this.spacing = (fur.spacing ?? 0.02) * 0.85;
     const counts = new Uint16Array(S);
     let n = 0;
     for (let s = 0; s < S; s++) {
-      counts[s] = Math.round(C * Math.min(2.6, Math.max(0.7, Math.pow(ref / Math.max(0.005, fur.natLen[s]), 0.6))));
+      counts[s] = Math.round(C * Math.min(3.2, Math.max(0.7, Math.pow(ref / Math.max(0.005, fur.natLen[s]), 0.6))));
       n += counts[s];
     }
     // Round-robin order (every guide's first hair, then every guide's second...) so drawing only
     // the first part of the list still covers the whole dog.
     const guide = new Float32Array(n), off = new Float32Array(n * 2), rnd = new Float32Array(n * 4);
     const maxC = Math.max(...counts);
-    const angle = new Float32Array(S).map(() => rng() * Math.PI * 2);
     const phase = new Float32Array(S).map(() => rng());
     for (let c = 0, i = 0; c < maxC; c++) {
       for (let s = 0; s < S; s++) {
         if (c >= counts[s]) continue;
         guide[i] = s;
-        // Low-discrepancy spiral: the first few roots of a clump already cover its whole patch, so
-        // drawing fewer hairs thins the coat evenly.
-        const r = Math.sqrt((phase[s] + c * 0.618034) % 1), th = angle[s] + c * 2.39996 + (rng() - 0.5) * 0.5;
+        // Evenly spread out from the centre (so the first few roots of a clump already cover its
+        // whole patch, and drawing fewer hairs thins the coat evenly), at random angles: a
+        // sunflower spiral would show its spiral arms in short fur.
+        const r = Math.sqrt((phase[s] + c * 0.618034) % 1), th = rng() * Math.PI * 2;
         off[i * 2] = Math.cos(th) * r;
         off[i * 2 + 1] = Math.sin(th) * r;
         rnd[i * 4] = rng();
@@ -277,7 +288,7 @@ export class HairView {
     // Guide curves (root + K points per row) and per-guide state, refreshed every frame.
     const W = K + 1;
     this.posData = new Float32Array(W * S * 4);
-    this.attrData = new Float32Array(3 * S * 4);
+    this.attrData = new Float32Array(4 * S * 4);
     const tex = (data, w) => {
       const t = new THREE.DataTexture(data, w, S, THREE.RGBAFormat, THREE.FloatType);
       t.minFilter = t.magFilter = THREE.NearestFilter;
@@ -286,14 +297,12 @@ export class HairView {
       return t;
     };
     this.tPos = tex(this.posData, W);
-    this.tAttr = tex(this.attrData, 3);
+    this.tAttr = tex(this.attrData, 4);
     const uniforms = {
       tPos: { value: this.tPos },
       tAttr: { value: this.tAttr },
       uK: { value: K },
       uWidth: { value: style.width * Math.sqrt(30 / C) },
-      // Children spread over the patch of skin each guide stands for, overlapping a little.
-      uSpacing: { value: (fur.spacing ?? 0.02) * 0.85 },
       uStyle: { value: new THREE.Vector4(style.frizz, style.freq, style.fan, style.lock) },
       uLoft: { value: style.loft },
       uPx: shared.uPx,
@@ -327,7 +336,7 @@ export class HairView {
       }
       f.strandColor(s, hint, _col);
       const wet = f.wet[s];
-      const a = s * 12;
+      const a = s * 16;
       A[a] = _col[0];
       A[a + 1] = _col[1];
       A[a + 2] = _col[2];
@@ -343,6 +352,10 @@ export class HairView {
       const m = f.mat[s];
       A[a + 10] = Math.min(1, f.lather[s] * 1.5 + dirt * 0.45 + (m >= 0 ? f.mats[m].health * 0.8 : 0));
       A[a + 11] = Math.min(1.5, Math.max(0.15, f.len[s] / this.refLen));
+      // Children spread over the patch of skin each guide stands for, overlapping a little.
+      A[a + 12] = f.natLen[s];
+      A[a + 13] = this.spacing * f.disc[s];
+      A[a + 14] = f.curv[s];
     }
     this.tPos.needsUpdate = true;
     this.tAttr.needsUpdate = true;

@@ -91,8 +91,13 @@ export class Fur {
         const stiffMul = part.stiffMul ? part.stiffMul(P, N, t) : 1;
         const standMul = part.standMul ? part.standMul(P, N, t) : 1;
         // Sampled on simple shapes, then moved onto the dog's actual skin.
-        const [Pr, Nr] = relocate ? relocate(part.bone, P, N) : [P, N];
-        tmp.push({ bone: part.bone, P: Pr, N: Nr, G, len, region, col, part: part.name, stiffMul, standMul });
+        const [Pr, Nr, curv = 0] = relocate ? relocate(part.bone, P, N) : [P, N];
+        // disc: how wide this guide's clump of fine hairs spreads, relative to the usual;
+        // curv: how the skin curves there (sum of principal curvatures, 1/m).
+        const d = { bone: part.bone, P: Pr, N: Nr, G, len, region, col, part: part.name, stiffMul, standMul, disc: part.disc ?? 1, curv };
+        // A last look at where the root really landed (faces keep clear of eyes and nose).
+        if (part.after && part.after(d) === false) continue;
+        tmp.push(d);
       }
     }
 
@@ -131,8 +136,13 @@ export class Fur {
     this.standMul = new Float32Array(S);
     this.shed = new Float32Array(S);
     this.shed0 = new Float32Array(S);
+    this.disc = new Float32Array(S);
+    this.curv = new Float32Array(S);
     this.mat = new Int16Array(S).fill(-1);
     this.coll = new Int8Array(S * 4).fill(-1);
+    // How far into each of those colliders the strand may go (1 = to its surface): never deeper
+    // than its own root sits, so hair lies on the real skin rather than on the padded shapes.
+    this.collA = new Float32Array(S * 4).fill(1);
     this.rootPos = new Float32Array(S * 3);
     this.rootN = new Float32Array(S * 3);
     this.offs = new Float32Array(NP * 3);
@@ -176,6 +186,8 @@ export class Fur {
       const ml = Math.hypot(mx, my, mz) || 1;
       this.messyDir.set([mx / ml, my / ml, mz / ml], s * 3);
       this.phase[s] = rng() * Math.PI * 2;
+      this.disc[s] = d.disc;
+      this.curv[s] = d.curv;
       this.natLen[s] = d.len;
       this.len[s] = d.len;
       // Fewer strands on phones are drawn a little puffier so the coat stays full.
@@ -255,7 +267,11 @@ export class Fur {
         if (d < reach) cands.push([d, c]);
       }
       cands.sort((a, b) => a[0] - b[0]);
-      for (let j = 0; j < Math.min(4, cands.length); j++) this.coll[s * 4 + j] = cands[j][1];
+      for (let j = 0; j < Math.min(4, cands.length); j++) {
+        const c = cands[j][1];
+        this.coll[s * 4 + j] = c;
+        this.collA[s * 4 + j] = Math.max(0.5, Math.min(1, colliders.depth(c, rx, ry, rz)));
+      }
     }
   }
 
@@ -339,8 +355,8 @@ export class Fur {
       if (m >= 0) sOut *= 1 - 0.6 * this.mats[m].health;
       sOut = Math.min(0.92, sOut);
       this.alpha[s] = (stiff * (0.28 + 0.72 * sm) + 0.06 * Math.max(0, f - 1)) * this.stiffMul[s];
-      // Short fur is naturally springier.
-      if (this.len[s] < 0.04) this.alpha[s] = Math.max(this.alpha[s], 0.35);
+      // Short fur is naturally springier, and very short fur keeps the way it was groomed.
+      if (this.len[s] < 0.04) this.alpha[s] = Math.max(this.alpha[s], this.len[s] < 0.025 ? 0.6 : 0.35);
       const lenF = Math.min(1, this.len[s] / Math.max(0.01, this.natLen[s]));
       // A coat still full of undercoat is puffier and scruffier.
       const shed = this.shed[s];
@@ -429,8 +445,10 @@ export class Fur {
       const seg = this.len[s] / K;
       const alpha = this.alpha[s];
       const damp = 0.986 - 0.05 * wet;
-      const droop = (wet * 0.6 + (1 - Math.min(1, this.fluff[s])) * 0.3) * seg;
+      // Wet or limp hair sags; very short fur just lies flatter on the skin.
+      const droop = (wet * 0.6 + (1 - Math.min(1, this.fluff[s])) * 0.3) * seg * (this.len[s] < 0.025 ? 0.15 : 1);
       const c0 = this.coll[s * 4], c1 = this.coll[s * 4 + 1], c2 = this.coll[s * 4 + 2], c3 = this.coll[s * 4 + 3];
+      const collA = this.collA;
       for (let k = 0; k < K; k++) {
         const i = s * K + k;
         const i3 = i * 3;
@@ -468,6 +486,7 @@ export class Fur {
             const ci = cc === 0 ? c0 : cc === 1 ? c1 : cc === 2 ? c2 : c3;
             if (ci < 0) break;
             const cb = ci * 16;
+            const allow = collA[s * 4 + cc];
             if (C[cb] === 0) {
               const ex = px - C[cb + 1], ey = py - C[cb + 2], ez = pz - C[cb + 3];
               const rx = C[cb + 13], ry = C[cb + 14], rz = C[cb + 15];
@@ -475,8 +494,8 @@ export class Fur {
               let ly2 = (ex * C[cb + 7] + ey * C[cb + 8] + ez * C[cb + 9]) / ry;
               let lz2 = (ex * C[cb + 10] + ey * C[cb + 11] + ez * C[cb + 12]) / rz;
               const q = lx2 * lx2 + ly2 * ly2 + lz2 * lz2;
-              if (q < 1 && q > 1e-8) {
-                const inv = 1 / Math.sqrt(q);
+              if (q < allow * allow && q > 1e-8) {
+                const inv = allow / Math.sqrt(q);
                 lx2 *= inv * rx; ly2 *= inv * ry; lz2 *= inv * rz;
                 px = C[cb + 1] + C[cb + 4] * lx2 + C[cb + 7] * ly2 + C[cb + 10] * lz2;
                 py = C[cb + 2] + C[cb + 5] * lx2 + C[cb + 8] * ly2 + C[cb + 11] * lz2;
@@ -485,7 +504,7 @@ export class Fur {
             } else {
               const ax = C[cb + 1], ay = C[cb + 2], az = C[cb + 3];
               const abx = C[cb + 4] - ax, aby = C[cb + 5] - ay, abz = C[cb + 6] - az;
-              const r = C[cb + 7];
+              const r = C[cb + 7] * allow;
               const ab2 = abx * abx + aby * aby + abz * abz || 1e-6;
               let t = ((px - ax) * abx + (py - ay) * aby + (pz - az) * abz) / ab2;
               t = t < 0 ? 0 : t > 1 ? 1 : t;

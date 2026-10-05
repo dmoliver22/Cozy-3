@@ -117,6 +117,24 @@ class Colliders {
     d[o + 4] = b.x; d[o + 5] = b.y; d[o + 6] = b.z;
     d[o + 7] = r;
   }
+  // How deep a point sits in collider i, as a fraction of its size: 1 on the surface or outside,
+  // less inside (normalised radius for ellipsoids, distance over radius for capsules).
+  depth(i, x, y, z) {
+    const d = this.data, o = i * 16;
+    if (d[o] === 0) {
+      const ex = x - d[o + 1], ey = y - d[o + 2], ez = z - d[o + 3];
+      const lx = (ex * d[o + 4] + ey * d[o + 5] + ez * d[o + 6]) / d[o + 13];
+      const ly = (ex * d[o + 7] + ey * d[o + 8] + ez * d[o + 9]) / d[o + 14];
+      const lz = (ex * d[o + 10] + ey * d[o + 11] + ez * d[o + 12]) / d[o + 15];
+      return Math.sqrt(lx * lx + ly * ly + lz * lz);
+    }
+    const ax = d[o + 1], ay = d[o + 2], az = d[o + 3];
+    const abx = d[o + 4] - ax, aby = d[o + 5] - ay, abz = d[o + 6] - az;
+    const ab2 = abx * abx + aby * aby + abz * abz || 1e-6;
+    let t = ((x - ax) * abx + (y - ay) * aby + (z - az) * abz) / ab2;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    return Math.hypot(x - ax - abx * t, y - ay - aby * t, z - az - abz * t) / d[o + 7];
+  }
   // Approximate distance from a point to collider i's surface.
   distance(i, x, y, z) {
     const d = this.data, o = i * 16;
@@ -355,7 +373,6 @@ export class Dog {
     this.body = new DogBody(this);
     this.group.add(this.body.mesh, this.body.earMesh);
     this.vHead.add(this.body.face);
-    this.eyes = this.body.eyes;
     const parts = this._furParts();
     const cut = CUTS[this.cutKey] ?? CUTS.tidy;
     this.fur = new Fur({ parts, dog: this, breed: B, seed: this.seed, cut, relocate: (bone, P, N) => this.body.relocate(bone, P, N) });
@@ -374,7 +391,6 @@ export class Dog {
     const [rx, ry, rz] = B.torso;
     const [hx, hy, hz] = B.head.r;
     const sn = B.snout;
-    const eyeL = new THREE.Vector3(...B.eyes.at), eyeR = new THREE.Vector3(-B.eyes.at[0], B.eyes.at[1], B.eyes.at[2]);
     const snoutC = new THREE.Vector3(...sn.at);
     const fringe = !!B.fur.fringe;
 
@@ -406,6 +422,7 @@ export class Dog {
     };
     // Shih tzu style topknot: the crown is gathered up into a plume.
     const isTopknot = (P) => F.topknot && P[1] > 0.32 * hy && P[2] < 0.45 * hz;
+    const isForelock = (P) => F.topknot && !isTopknot(P) && P[2] > 0.1 * hz && P[1] > eyeY + B.eyes.r * 0.8;
     // Feathering: longer hair on the backs of the legs and under the tail.
     const legFeather = (P, Nn) => 1 + (F.feather ?? 0) * smoothstep(0.1, 0.85, -Nn[1]);
     const tailFeather = (P, Nn) => (silky ? 1 + 0.75 * Math.max(0, -Nn[0]) : 1);
@@ -428,45 +445,99 @@ export class Dog {
       },
       color: coat('torso'),
     });
+    // Face hair: lies flat and flows back from the nose like a real coat (up over the forehead,
+    // back and down over the cheeks), grows right up to the eyelids and the nose leather, and is
+    // short and turned away around the eyes. Beards, moustaches, fringes and topknots hang their
+    // own way. Faces get twice the guide density so the short pile is even.
+    const body = this.body;
+    const disc0 = this.furSpacing * 0.85;
+    const flat = (g, Nn, lift = 0.12) => {
+      const d = g[0] * Nn[0] + g[1] * Nn[1] + g[2] * Nn[2];
+      return [g[0] - Nn[0] * d + Nn[0] * lift, g[1] - Nn[1] * d + Nn[1] * lift, g[2] - Nn[2] * d + Nn[2] * lift];
+    };
+    const longFace = F.topknot || fringe || F.beard;
+    const faceAfter = (d) => {
+      const c = body.faceClearance(d.P);
+      if (c.eye < 0 || c.nose < 0) return false;
+      const re = c.eyeR;
+      // Brows and fringes may hang over the eyes; everything else keeps clear of them.
+      const overEye = isBrow(d.P) || (fringe && d.P[1] > eyeY);
+      if (!overEye) {
+        const near = smoothstep(0, 2.4 * re, c.eye);
+        d.len *= longFace ? 0.4 + 0.6 * near : 0.2 + 0.8 * near;
+        const w = 1 - near;
+        d.G = [d.G[0] + c.away[0] * w * 2, d.G[1] + c.away[1] * w * 2, d.G[2] + c.away[2] * w * 2];
+        // Keep the clump's fine hairs from rooting on the eye.
+        d.disc = Math.min(d.disc, Math.max(0.12, (c.eye + 0.1 * re) / disc0));
+      }
+      // Fur shortens toward the nose leather, so the nose stays clear.
+      d.len *= 0.35 + 0.65 * smoothstep(0, 2 * body.noseR, c.nose);
+      d.disc = Math.min(d.disc, Math.max(0.12, (c.nose + 0.003) / disc0));
+      return true;
+    };
     parts.push({
       name: 'head', bone: this.boneHead, kind: 'ellipsoid', center: [0, 0, 0], radii: [hx, hy, hz],
-      count: cnt(headA),
+      count: cnt(headA) * 2,
+      disc: 0.8,
       exclude: (P) => {
-        const p = new THREE.Vector3(...P);
-        const er = B.eyes.r * 2.3;
-        if (p.distanceTo(eyeL) < er || p.distanceTo(eyeR) < er) return true;
-        // Inside the snout.
-        const d = p.clone().sub(snoutC);
+        // Inside the muzzle (it has its own hair).
+        const d = new THREE.Vector3(...P).sub(snoutC);
         return (d.x / sn.r[0]) ** 2 + (d.y / sn.r[1]) ** 2 + (d.z / sn.r[2]) ** 2 < 0.8;
       },
-      region: (P) => (isBrow(P) ? REGION.brows : P[2] > 0.3 * hz && P[1] < 0.3 * hy ? REGION.face : REGION.headtop),
+      after: faceAfter,
+      // Bearded breeds keep long hair for the brows and the beard (on the muzzle); their cheeks and
+      // skull are short.
+      region: (P) => (isBrow(P) ? REGION.brows : F.beard ? REGION.headtop : P[2] > 0.3 * hz && P[1] < 0.3 * hy ? REGION.face : REGION.headtop),
       groom: (P, Nn) => {
         if (isBrow(P)) return [sign(P[0]) * 0.3, 0.05, 1];
         if (isTopknot(P)) return [Nn[0] * 0.15, 1, -0.3];
+        // The forehead is combed up and back into the topknot, clear of the eyes.
+        if (isForelock(P)) return [Nn[0] * 0.2, 0.8, -0.6];
+        // Below the eyes the long face hair falls to either side of the muzzle, not across it.
+        if (F.topknot && P[2] > 0.2 * hz && P[1] < eyeY) return [sign(P[0]) * 0.75, -0.7, 0.1];
         if (F.topknot) return [Nn[0] * 0.45, -0.9, 0.2];
         if (fringe && P[2] > -0.25 * hz && P[1] > -0.2 * hy) return [Nn[0] * 0.2, -0.75, 0.65];
-        if (P[2] > 0.3 * hz) return [Nn[0] * 0.3, -0.5, 0.6];
-        return [Nn[0] * 0.3, Nn[1] * 0.3 - 0.3, -0.9];
+        // Short coats: back from the stop over the skull, back and down over the cheeks, back
+        // under the jaw.
+        if (P[1] < -0.45 * hy) return flat([0, -0.2, -1], Nn);
+        if (Math.abs(Nn[0]) > 0.55) return flat([Nn[0] * 0.2, -0.5, -0.85], Nn);
+        return flat([0, 0.3, -1], Nn);
       },
-      lenScale: (P) => (fringe && P[2] > 0 && P[1] > 0 ? 1.15 : isTopknot(P) ? 0.85 : 1),
-      stiffMul: (P) => (isTopknot(P) ? 3.2 : isBrow(P) ? 1.6 : 1),
-      standMul: (P) => (isTopknot(P) || isBrow(P) ? 0.15 : 1),
+      lenScale: (P) => (fringe && P[2] > 0 && P[1] > 0 ? 1.15 : isTopknot(P) ? 0.85 : isForelock(P) ? 0.5 : 1),
+      stiffMul: (P) => (isTopknot(P) ? 3.2 : isBrow(P) ? 1.6 : isForelock(P) ? 2.2 : 1),
+      standMul: (P) => (isTopknot(P) || isBrow(P) ? 0.15 : longFace ? 1 : 0.35),
       color: coat('head'),
     });
     parts.push({
       name: 'snout', bone: this.boneHead, kind: 'ellipsoid', center: sn.at, radii: sn.r,
-      count: cnt(snoutA),
+      count: cnt(snoutA) * 2,
+      disc: 0.8,
       exclude: (P) => {
         const z = (P[2] - sn.at[2]) / sn.r[2];
         const y = (P[1] - sn.at[1]) / sn.r[1];
-        if (z > 0.55) return true; // nose & lips
-        if (y < -0.5 && z > 0 && !F.beard) return true; // mouth (a beard grows right over it)
+        if (y < -0.55 && z > 0.2 && !F.beard && !F.topknot) return true; // the mouth (beards grow over it)
         // inside head
         return (P[0] / hx) ** 2 + (P[1] / hy) ** 2 + (P[2] / hz) ** 2 < 0.85;
       },
+      after: faceAfter,
       region: () => REGION.face,
-      // Beards and moustaches hang down; ordinary muzzles are groomed forward.
-      groom: (P, Nn) => (F.beard || F.topknot ? [Nn[0] * 0.3, -0.85, 0.45] : [Nn[0] * 0.4, Nn[1] * 0.3 - 0.4, 0.8]),
+      // Ordinary muzzles are short and lie back toward the eyes. Shih tzu: the hair on the bridge
+      // of the nose grows up toward the eyes, the moustache out to the sides, the beard down.
+      // Schnauzer: a short bridge groomed toward the nose over a long beard and moustache.
+      groom: (P, Nn) => {
+        const bridge = P[1] > sn.at[1] + 0.35 * sn.r[1];
+        if (F.topknot) return bridge ? [Nn[0] * 0.4, 0.75, -0.35] : Math.abs(Nn[0]) > 0.5 ? [Nn[0] * 0.8, -0.6, 0.25] : [0, -1, 0.2];
+        if (F.beard) return bridge ? flat([0, 0.1, 1], Nn) : [Nn[0] * 0.3, -0.85, 0.45];
+        return flat([Nn[0] * 0.25, -0.15, -1], Nn);
+      },
+      lenScale: (P) => {
+        const bridge = P[1] > sn.at[1] + 0.35 * sn.r[1];
+        if (F.topknot) return bridge ? 0.45 : 1;
+        if (F.beard) return bridge ? 0.3 : 1;
+        return 0.8;
+      },
+      // Beards and moustaches hang rather than stand out.
+      standMul: () => (F.beard || F.topknot ? 0.35 : 0.3),
       color: coat('snout'),
     });
     parts.push({
@@ -507,12 +578,24 @@ export class Dog {
       });
     });
     for (const bones of [this.boneEarL, this.boneEarR]) {
-      bones.forEach((b) => {
+      bones.forEach((b, j) => {
         parts.push({
           name: 'ear', bone: b, kind: 'seg', radius: () => B.ears.w * 0.45,
           count: cnt(earA),
           region: () => REGION.ears,
           groom: (P, Nn) => [Nn[0] * 0.2, Nn[1] * 0.2, 1],
+          // Upright ears carry short, close fur; floppy ears may be feathered.
+          lenScale: () => (B.ears.kind === 'floppy' ? 1 : j === 0 ? 0.4 : 0.22),
+          standMul: () => (B.ears.kind === 'floppy' ? 1 : 0.3),
+          // Along the thin rim of the flap (sharply curved), fur is short and lies along the edge
+          // instead of bristling out sideways.
+          after: (d) => {
+            if (d.curv > 60) {
+              d.len *= B.ears.kind === 'floppy' ? 0.7 : 0.35;
+              d.standMul *= 0.3;
+            }
+            return true;
+          },
           color: coat('ear'),
         });
       });
@@ -525,7 +608,6 @@ export class Dog {
     // The head group follows the head's rigid body; the body adds the face to it in growFur().
     this.vHead = new THREE.Group();
     this.group.add(this.vHead);
-    this.eyes = [];
     const pink = new THREE.MeshStandardMaterial({ color: 0xe0707f, roughness: 0.4 });
     this.vTongue = new THREE.Mesh(skinGeo, pink);
     // Just inside the front of the mouth, under the nose.
@@ -1093,7 +1175,7 @@ export class Dog {
     this.body?.update();
     // Eyes and tongue.
     const open = this.blink.value;
-    for (const e of this.eyes) e.scale.set(1, Math.max(0.08, open), 1);
+    this.body?.blink(open);
     const tv = Math.max(0, this.tongue.value);
     this.tonguePend.update(dt, this.head.vel.x * 0, 0);
     this.vTongue.visible = tv > 0.05;

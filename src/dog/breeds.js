@@ -205,7 +205,7 @@ export const BREEDS = {
     neckR: 0.045,
     head: { r: [0.068, 0.068, 0.068], at: [0, 0.11, 0.13] },
     snout: { r: [0.026, 0.024, 0.035], at: [0, -0.022, 0.065] },
-    eyes: { at: [0.03, 0.012, 0.058], r: 0.0156 },
+    eyes: { at: [0.03, 0.012, 0.058], r: 0.0156, tilt: 0.13 },
     ears: { kind: 'upright', at: [0.04, 0.055, -0.01], seg: 0.025, w: 0.03 },
     tail: { at: [0, 0.06, -0.1], segs: 3, seg: 0.04, dirs: [[0, 1, -0.3], [0, 0.8, 0.5], [0, 0.2, 1]], stiff: 0.32, r: 0.02 },
     fur: {
@@ -233,10 +233,11 @@ export const BREEDS = {
     legR: 0.042,
     neck: [0, 0.07, 0.23],
     neckR: 0.065,
-    head: { r: [0.095, 0.095, 0.105], at: [0, 0.18, 0.35] },
-    snout: { r: [0.05, 0.045, 0.08], at: [0, -0.035, 0.11] },
-    eyes: { at: [0.043, 0.022, 0.085], r: 0.0195 },
-    ears: { kind: 'floppy', at: [0.083, 0.04, -0.01], seg: 0.05, w: 0.055 },
+    // A broad but not round skull and a long, deep muzzle about as long as the skull.
+    head: { r: [0.08, 0.083, 0.1], at: [0, 0.18, 0.35] },
+    snout: { r: [0.045, 0.044, 0.09], at: [0, -0.036, 0.12] },
+    eyes: { at: [0.039, 0.022, 0.08], r: 0.0195 },
+    ears: { kind: 'floppy', at: [0.071, 0.036, -0.008], seg: 0.05, w: 0.055 },
     tail: { at: [0, 0.07, -0.28], segs: 4, seg: 0.07, dirs: [[0, 0.2, -1], [0, -0.1, -1], [0, -0.3, -1], [0, -0.35, -1]], stiff: 0.2, r: 0.025 },
     // Long, wavy, glossy top coat that lies flat, with feathering on legs, belly, chest and tail.
     fur: {
@@ -272,7 +273,7 @@ export const BREEDS = {
     neckR: 0.045,
     head: { r: [0.072, 0.072, 0.075], at: [0, 0.13, 0.18] },
     snout: { r: [0.032, 0.029, 0.04], at: [0, -0.026, 0.072] },
-    eyes: { at: [0.032, 0.016, 0.064], r: 0.0169 },
+    eyes: { at: [0.032, 0.016, 0.064], r: 0.0169, lid: [0.9, 0.68, 0.6], tilt: 0.04 },
     ears: { kind: 'floppy', at: [0.06, 0.03, -0.01], seg: 0.035, w: 0.035 },
     tail: { at: [0, 0.07, -0.13], segs: 3, seg: 0.04, dirs: [[0, 1, -0.4], [0, 0.9, 0.3], [0, 0.3, 1]], stiff: 0.3, r: 0.02 },
     fur: {
@@ -300,7 +301,8 @@ export const BREEDS = {
     neckR: 0.045,
     head: { r: [0.075, 0.072, 0.07], at: [0, 0.11, 0.17] },
     snout: { r: [0.03, 0.026, 0.026], at: [0, -0.022, 0.06] },
-    eyes: { at: [0.034, 0.013, 0.057], r: 0.0175 },
+    eyes: { at: [0.034, 0.013, 0.057], r: 0.0175, size: 0.85, lid: [0.92, 0.74, 0.66], tilt: 0.03 },
+    noseSize: 0.62,
     ears: { kind: 'floppy', at: [0.062, 0.035, -0.01], seg: 0.04, w: 0.04 },
     tail: { at: [0, 0.06, -0.12], segs: 3, seg: 0.04, dirs: [[0, 1, -0.3], [0, 0.8, 0.5], [0, 0.2, 1]], stiff: 0.3, r: 0.018 },
     // Floor-length straight silk, parted down the spine, with a topknot and moustache.
@@ -338,14 +340,14 @@ export const BREEDS = {
     neckR: 0.045,
     head: { r: [0.058, 0.066, 0.085], at: [0, 0.155, 0.2] },
     snout: { r: [0.038, 0.04, 0.072], at: [0, -0.03, 0.088] },
-    eyes: { at: [0.031, 0.02, 0.07], r: 0.0155 },
+    eyes: { at: [0.031, 0.02, 0.07], r: 0.0155, size: 0.68 },
     ears: { kind: 'floppy', at: [0.042, 0.06, -0.005], seg: 0.03, w: 0.042, stiff: 0.2 },
     tail: { at: [0, 0.075, -0.16], segs: 2, seg: 0.035, dirs: [[0, 1, -0.35], [0, 1, -0.1]], stiff: 0.45, r: 0.02 },
     // A harsh, bristly jacket with soft furnishings: big beard, bushy brows, a leg and belly skirt.
     fur: {
       type: 'wiry', segs: 3,
       len: 0.045, count: 1050, puff: 0.021, curl: 0.2, waveStep: 2.6, stiff: 0.34, stand: 0.34, brows: true, beard: true,
-      regions: { face: 2.1, brows: 1.9, legs: 1.75, paws: 1.6, belly: 1.85, chest: 1.3, back: 0.85, rear: 0.85, neck: 0.9, headtop: 0.7, ears: 0.55, tail: 0.8, tailtip: 0.8 },
+      regions: { face: 1.45, brows: 1.0, legs: 1.75, paws: 1.6, belly: 1.85, chest: 1.3, back: 0.85, rear: 0.85, neck: 0.9, headtop: 0.38, ears: 0.55, tail: 0.8, tailtip: 0.8 },
     },
     dirt: 0.85,
     mats: 3,
@@ -372,7 +374,7 @@ export const BREEDS = {
     neckR: 0.065,
     head: { r: [0.09, 0.088, 0.098], at: [0, 0.19, 0.32] },
     snout: { r: [0.045, 0.042, 0.075], at: [0, -0.035, 0.1] },
-    eyes: { at: [0.042, 0.024, 0.082], r: 0.0185, color: '#7cc6ef' },
+    eyes: { at: [0.042, 0.024, 0.082], r: 0.0185, color: '#7cc6ef', lid: [0.88, 0.5, 0.4], tilt: 0.16 },
     ears: { kind: 'upright', at: [0.052, 0.075, -0.015], seg: 0.045, w: 0.05 },
     tail: { at: [0, 0.07, -0.26], segs: 3, seg: 0.07, dirs: [[0, 0.7, -1], [0, 1, -0.2], [0, 0.6, 0.6]], stiff: 0.28, r: 0.03 },
     // A plush stand-up double coat stuffed with undercoat that comes out in clumps.
