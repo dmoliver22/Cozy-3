@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Suds &amp; Snips</title>
+    <meta name="description" content="A cozy first-person dog grooming salon. Matted, muddy and miserable goes in. A fluffball comes out." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&family=Figtree:wght@400;600;800&family=Sniglet:wght@400;800&display=swap" />
+  </head>
+  <body>
+    <!-- APP:START -->
+    <div id="app">
+      <canvas id="view" aria-label="Suds and Snips salon"></canvas>
+
+      <div id="hud" hidden>
+        <div class="hud-corner">
+          <div class="chip chip-day"><span id="hud-day">Day 1</span><span class="dot"></span><span id="hud-clock">9:00</span></div>
+          <div class="chip chip-money"><span class="coin" aria-hidden="true"></span><span id="hud-money">$0</span></div>
+        </div>
+
+        <aside id="job" class="job" hidden>
+          <div class="job-head">
+            <div class="job-dog" id="job-dog">Biscuit</div>
+            <div class="job-req" id="job-req">Teddy Bear cut</div>
+          </div>
+          <ol class="job-steps" id="job-steps"></ol>
+        </aside>
+
+        <div id="crosshair" class="crosshair"><span></span></div>
+        <div id="hint" class="hint"></div>
+        <div id="toasts" class="toasts" aria-live="polite"></div>
+        <button id="prompt" class="prompt" hidden></button>
+        <div id="speech" class="speech" hidden></div>
+        <div id="hotbar" class="hotbar" role="toolbar" aria-label="Grooming tools"></div>
+        <div id="guard" class="guard-tag" hidden></div>
+      </div>
+
+      <div id="touch" class="touch" hidden>
+        <div id="stick" class="stick"><div class="stick-knob"></div></div>
+        <div class="touch-buttons">
+          <button id="t-turn-l" class="tbtn small" aria-label="Turn dog left">⟲</button>
+          <button id="t-alt" class="tbtn small" aria-label="Tool option">Opt</button>
+          <button id="t-turn-r" class="tbtn small" aria-label="Turn dog right">⟳</button>
+          <button id="t-act" class="tbtn small" aria-label="Interact">Act</button>
+          <button id="t-use" class="tbtn big" aria-label="Use tool">Use</button>
+        </div>
+      </div>
+
+      <section id="title" class="screen title-screen">
+        <div class="title-card">
+          <h1 class="logo"><span class="logo-suds">Suds</span><span class="logo-amp">&amp;</span><span class="logo-snips">Snips</span></h1>
+          <p class="tagline">Matted, muddy and miserable goes in. A fluffball comes out.</p>
+          <div class="title-actions">
+            <button id="btn-start" class="btn btn-peach">Open the salon</button>
+            <button id="btn-reset" class="btn btn-ghost" hidden>Start a fresh salon</button>
+          </div>
+          <dl class="controls">
+            <div><dt>Mouse</dt><dd>Look &amp; aim</dd></div>
+            <div><dt>Click</dt><dd>Use tool</dd></div>
+            <div><dt>1–8 / wheel</dt><dd>Pick tool</dd></div>
+            <div><dt>R / right-click</dt><dd>Tool option</dd></div>
+            <div><dt>WASD</dt><dd>Walk</dd></div>
+            <div><dt>Q / E</dt><dd>Turn the dog</dd></div>
+            <div><dt>F</dt><dd>Interact / next step</dd></div>
+            <div><dt>B</dt><dd>Salon catalogue</dd></div>
+          </dl>
+          <p class="title-foot">Everything here wobbles on springs: fur, ears, tails, towels, bubbles, even your hands.</p>
+        </div>
+      </section>
+
+      <section id="ticket" class="screen modal" hidden>
+        <article class="intake">
+          <header class="intake-head">
+            <span class="intake-label">Grooming intake</span>
+            <span class="intake-no" id="tk-no">No. 001</span>
+          </header>
+          <div class="intake-body">
+            <div class="intake-row big">
+              <div><span class="field">Dog</span><strong id="tk-dog">Biscuit</strong></div>
+              <div><span class="field">Breed</span><strong id="tk-breed">Old English Sheepdog</strong></div>
+            </div>
+            <div class="intake-row">
+              <div><span class="field">Owner</span><span id="tk-owner">Mrs. Pemberton</span></div>
+              <div><span class="field">Temperament</span><span id="tk-temper">Wiggly</span></div>
+            </div>
+            <div class="intake-row">
+              <div><span class="field">Coat</span><span id="tk-coat">Muddy, 4 mats</span></div>
+              <div><span class="field">Bow</span><span id="tk-bow" class="bow-chip">Mint</span></div>
+            </div>
+            <div class="intake-cut">
+              <span class="field">Cut requested</span>
+              <strong id="tk-cut">Teddy Bear</strong>
+              <span id="tk-cut-detail" class="cut-detail">Body #3 · legs #4 · keep the face round</span>
+            </div>
+            <p class="intake-note" id="tk-note">“He found the duck pond again. Make him a cloud?”</p>
+          </div>
+          <footer class="intake-foot">
+            <button id="btn-take" class="btn btn-peach">Take the leash</button>
+          </footer>
+        </article>
+      </section>
+
+      <section id="checkout" class="screen modal" hidden>
+        <article class="receipt">
+          <div class="receipt-photo"><canvas id="co-photo" width="240" height="290"></canvas></div>
+          <div class="receipt-body">
+            <h2 id="co-title">Biscuit is a cloud!</h2>
+            <div class="stars" id="co-stars" aria-label="Rating"></div>
+            <ul class="receipt-lines" id="co-lines"></ul>
+            <div class="receipt-total"><span>Paid</span><strong id="co-total">$0</strong></div>
+            <p class="receipt-quote" id="co-quote"></p>
+            <div class="receipt-actions">
+              <button id="btn-shop" class="btn btn-ghost">Salon catalogue</button>
+              <button id="btn-next" class="btn btn-peach">Next appointment</button>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section id="shop" class="screen modal" hidden>
+        <article class="catalogue">
+          <header class="cat-head">
+            <h2>Salon catalogue</h2>
+            <div class="chip chip-money"><span class="coin" aria-hidden="true"></span><span id="shop-money">$0</span></div>
+          </header>
+          <div class="cat-cols">
+            <section><h3>Tools</h3><div id="shop-tools" class="cat-list"></div></section>
+            <section><h3>Salon</h3><div id="shop-salon" class="cat-list"></div></section>
+          </div>
+          <footer class="cat-foot"><button id="btn-shop-close" class="btn btn-peach">Back to the floor</button></footer>
+        </article>
+      </section>
+
+      <section id="pause" class="screen modal" hidden>
+        <article class="pause-card">
+          <h2>Tea break</h2>
+          <p>The salon waits for you. Rain keeps falling.</p>
+          <div class="pause-actions">
+            <button id="btn-resume" class="btn btn-peach">Back to grooming</button>
+            <button id="btn-music" class="btn btn-ghost">Music: on</button>
+            <button id="btn-pause-shop" class="btn btn-ghost">Salon catalogue</button>
+          </div>
+        </article>
+      </section>
+
+      <div id="flash" class="flash"></div>
+    </div>
+    <!-- APP:END -->
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

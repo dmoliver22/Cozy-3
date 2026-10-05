@@ -1,0 +1,8 @@
+node_modules/
+dist/
+dist-single/
+.vite/
+*.log
+.DS_Store
+test-results/
+shots/
