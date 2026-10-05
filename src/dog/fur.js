@@ -38,7 +38,7 @@ const _c = new THREE.Color();
 export const OPEN_GROUND = { y: 0, x0: -1e9, x1: 1e9, z0: -1e9, z1: 1e9, below: 0, walls: false, top: 0 };
 
 export class Fur {
-  constructor({ parts, dog, breed, seed, cut }) {
+  constructor({ parts, dog, breed, seed, cut, relocate = null }) {
     this.dog = dog;
     this.breed = breed;
     const rng = mulberry32(seed * 7919 + 13);
@@ -90,7 +90,9 @@ export class Fur {
         const col = part.color(P, region, N, t, rng);
         const stiffMul = part.stiffMul ? part.stiffMul(P, N, t) : 1;
         const standMul = part.standMul ? part.standMul(P, N, t) : 1;
-        tmp.push({ bone: part.bone, P, N, G, len, region, col, part: part.name, stiffMul, standMul });
+        // Sampled on simple shapes, then moved onto the dog's actual skin.
+        const [Pr, Nr] = relocate ? relocate(part.bone, P, N) : [P, N];
+        tmp.push({ bone: part.bone, P: Pr, N: Nr, G, len, region, col, part: part.name, stiffMul, standMul });
       }
     }
 

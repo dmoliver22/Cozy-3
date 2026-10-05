@@ -4,6 +4,7 @@ import { Spring, Pendulum } from '../core/springs.js';
 import { clamp, lerp, mulberry32, smoothstep } from '../core/math.js';
 import { Fur, REGION, OPEN_GROUND } from './fur.js';
 import { HairView } from './hair.js';
+import { DogBody } from './body.js';
 import { BREEDS, CUTS } from './breeds.js';
 import { QUALITY } from '../core/quality.js';
 
@@ -347,61 +348,22 @@ export class Dog {
     if (this.fur) this.fur.place(this.frames);
   }
 
-  // Grow the coat. Needs a valid pose, so call after place().
+  // Build the body and grow the coat. Needs a valid standing pose, so call after place(): the
+  // skin is modelled and bound to the skeleton in that pose.
   growFur() {
     const B = this.B;
+    this.body = new DogBody(this);
+    this.group.add(this.body.mesh, this.body.earMesh);
+    this.vHead.add(this.body.face);
+    this.eyes = this.body.eyes;
     const parts = this._furParts();
     const cut = CUTS[this.cutKey] ?? CUTS.tidy;
-    this.fur = new Fur({ parts, dog: this, breed: B, seed: this.seed, cut });
+    this.fur = new Fur({ parts, dog: this, breed: B, seed: this.seed, cut, relocate: (bone, P, N) => this.body.relocate(bone, P, N) });
     this.fur.spacing = this.furSpacing;
     this.fur.init(this.frames, this.colliders);
     this.furView = new HairView(this.fur, { seed: this.seed });
     this.group.add(this.furView.mesh);
-    this._tintSkin();
-  }
-
-  // The skin under the hair takes a deeper shade of the coat that grows on it, so the gaps between
-  // hairs read as dense underfur rather than bare skin.
-  _tintSkin() {
-    const f = this.fur;
-    const sum = f.partNames.map(() => [0, 0, 0, 0, 0]);
-    for (let s = 0; s < f.S; s++) {
-      const a = sum[f.partId[s]];
-      a[0] += f.color[s * 3];
-      a[1] += f.color[s * 3 + 1];
-      a[2] += f.color[s * 3 + 2];
-      a[3] += f.natLen[s];
-      a[4]++;
-    }
-    // Deep coats are dark down at the skin; short coats show nearly their own colour.
-    const colorOf = (name) => {
-      const a = sum[f.partNames.indexOf(name)];
-      if (!a || !a[4]) return null;
-      const depth = Math.min(1, a[3] / a[4] / 0.08);
-      return new THREE.Color(a[0] / a[4], a[1] / a[4], a[2] / a[4]).multiplyScalar(0.88 - 0.4 * depth);
-    };
-    this.skinMats = [];
-    const tint = (mesh, name) => {
-      const c = colorOf(name);
-      if (!c) return;
-      const m = this.skinMat.clone();
-      m.color.copy(c);
-      m.userData.base = c.clone();
-      mesh.material = m;
-      this.skinMats.push(m);
-    };
-    tint(this.vTorso, 'torso');
-    tint(this.vHeadMesh, 'head');
-    tint(this.vSnout, 'snout');
-    tint(this.vNeck, 'neck');
-    this.legs.forEach((L, i) => {
-      const [u, l, p] = this.vLegs[i];
-      tint(u, L.name + '_u');
-      tint(l, L.name + '_l');
-      tint(p, L.name + '_l');
-    });
-    for (const m of this.vTail) tint(m, 'tail');
-    for (const side of this.vEars) for (const m of side) tint(m, 'ear');
+    this.body.colorize(this.fur);
   }
 
   _furParts() {
@@ -560,68 +522,15 @@ export class Dog {
 
   _buildVisuals() {
     const B = this.B;
-    const skinCol = new THREE.Color(this.colorway ? new THREE.Color(this.colorway).multiplyScalar(0.85) : B.skin);
-    this.skinMat = new THREE.MeshStandardMaterial({ color: skinCol, roughness: 0.85 });
-    const dark = new THREE.MeshStandardMaterial({ color: 0x1d1a1a, roughness: 0.18, metalness: 0.0 });
-    const shine = new THREE.MeshBasicMaterial({ color: 0xffffff });
-    const pink = new THREE.MeshStandardMaterial({ color: 0xef7f8f, roughness: 0.45 });
-    const mk = (mat = this.skinMat) => {
-      const m = new THREE.Mesh(skinGeo, mat);
-      m.castShadow = true;
-      m.receiveShadow = true;
-      this.group.add(m);
-      return m;
-    };
-    this.vTorso = mk();
+    // The head group follows the head's rigid body; the body adds the face to it in growFur().
     this.vHead = new THREE.Group();
     this.group.add(this.vHead);
-    const headMesh = (this.vHeadMesh = new THREE.Mesh(skinGeo, this.skinMat));
-    headMesh.scale.set(...B.head.r);
-    headMesh.castShadow = true;
-    this.vHead.add(headMesh);
-    const snout = (this.vSnout = new THREE.Mesh(skinGeo, this.skinMat));
-    snout.scale.set(...B.snout.r);
-    snout.position.set(...B.snout.at);
-    snout.castShadow = true;
-    this.vHead.add(snout);
-    const nose = new THREE.Mesh(skinGeo, dark);
-    const nr = B.snout.r[0] * 0.42;
-    nose.scale.set(nr * 1.15, nr * 0.85, nr);
-    nose.position.set(0, B.snout.at[1] + B.snout.r[1] * 0.45, B.snout.at[2] + B.snout.r[2] * 0.92);
-    this.vHead.add(nose);
     this.eyes = [];
-    for (const side of [1, -1]) {
-      const eg = new THREE.Group();
-      eg.position.set(B.eyes.at[0] * side, B.eyes.at[1], B.eyes.at[2]);
-      const e = new THREE.Mesh(skinGeo, dark);
-      e.scale.setScalar(B.eyes.r);
-      eg.add(e);
-      if (B.eyes.color) {
-        // Iris as a lens on the front of the eye, with the pupil in the middle.
-        const iris = new THREE.Mesh(skinGeo, new THREE.MeshStandardMaterial({ color: B.eyes.color, roughness: 0.2, emissive: B.eyes.color, emissiveIntensity: 0.15 }));
-        iris.scale.set(B.eyes.r * 0.82, B.eyes.r * 0.82, B.eyes.r * 0.45);
-        iris.position.set(0, 0, B.eyes.r * 0.62);
-        eg.add(iris);
-        const pupil = new THREE.Mesh(skinGeo, dark);
-        pupil.scale.set(B.eyes.r * 0.4, B.eyes.r * 0.4, B.eyes.r * 0.25);
-        pupil.position.set(0, 0, B.eyes.r * 0.9);
-        eg.add(pupil);
-      }
-      const s = new THREE.Mesh(skinGeo, shine);
-      s.scale.setScalar(B.eyes.r * 0.32);
-      s.position.set(B.eyes.r * 0.25 * side, B.eyes.r * 0.35, B.eyes.r * 0.75);
-      eg.add(s);
-      this.vHead.add(eg);
-      this.eyes.push(eg);
-    }
+    const pink = new THREE.MeshStandardMaterial({ color: 0xe0707f, roughness: 0.4 });
     this.vTongue = new THREE.Mesh(skinGeo, pink);
-    this.tongueBase = new THREE.Vector3(0, B.snout.at[1] - B.snout.r[1] * 0.7, B.snout.at[2] + B.snout.r[2] * 0.35);
+    // Just inside the front of the mouth, under the nose.
+    this.tongueBase = new THREE.Vector3(0, B.snout.at[1] - B.snout.r[1] * 0.66, B.snout.at[2] + B.snout.r[2] * 0.85);
     this.vHead.add(this.vTongue);
-
-    this.vNeck = mk();
-    this.vLegs = this.legs.map(() => [mk(), mk(), mk()]);
-    this.vTail = Array.from({ length: this.tail.n }, () => mk());
-    this.vEars = [Array.from({ length: 2 }, () => mk()), Array.from({ length: 2 }, () => mk())];
   }
 
   // ------------------------------------------------------------------
@@ -1177,46 +1086,11 @@ export class Dog {
     }
   }
 
-  _stretch(mesh, a, b, r, rz = r) {
-    _a.subVectors(b, a);
-    const len = _a.length() || 1e-5;
-    mesh.position.addVectors(a, b).multiplyScalar(0.5);
-    _q.setFromUnitVectors(UP, _a.multiplyScalar(1 / len));
-    mesh.quaternion.copy(_q);
-    mesh.scale.set(r, len * 0.5 + r * 0.6, rz);
-  }
-
   _syncVisuals(dt, ctx) {
     const B = this.B;
-    this.vTorso.position.copy(this.torso.pos);
-    this.vTorso.quaternion.copy(this.torso.quat);
-    this.vTorso.scale.set(...B.torso);
     this.vHead.position.copy(this.head.pos);
     this.vHead.quaternion.copy(this.head.quat);
-    this._stretch(this.vNeck, this.neckA, this.neckB, B.neckR);
-    this.legs.forEach((L, i) => {
-      const [u, l, p] = this.vLegs[i];
-      this._stretch(u, L.hipW, L.knee, B.legR);
-      this._stretch(l, L.knee, L.paw, B.legR * 0.88);
-      p.position.copy(L.paw);
-      p.position.y += B.legR * 0.35;
-      p.quaternion.copy(this.torso.quat);
-      p.scale.set(B.legR * 1.15, B.legR * 0.7, B.legR * 1.5);
-    });
-    for (let j = 0; j < this.tail.n; j++) this._stretch(this.vTail[j], this.tail.p[j], this.tail.p[j + 1], B.tail.r * (1 - j * 0.15));
-    [this.earL, this.earR].forEach((ch, s) => {
-      for (let j = 0; j < 2; j++) {
-        const m = this.vEars[s][j];
-        this._stretch(m, ch.p[j], ch.p[j + 1], B.ears.w * 0.5 * (1 - j * 0.2), B.ears.w * 0.18);
-        // Orient the flat side of the ear along the head.
-        _a.subVectors(ch.p[j + 1], ch.p[j]).normalize();
-        this.head.dirToWorld(_b.set(1, 0, 0), _b);
-        _c.crossVectors(_b, _a).normalize();
-        _b.crossVectors(_a, _c).normalize();
-        _m.makeBasis(_b, _a, _c);
-        m.quaternion.setFromRotationMatrix(_m);
-      }
-    });
+    this.body?.update();
     // Eyes and tongue.
     const open = this.blink.value;
     for (const e of this.eyes) e.scale.set(1, Math.max(0.08, open), 1);
@@ -1233,7 +1107,7 @@ export class Dog {
       const st = this._statsCache;
       const dirt = st ? 1 - st.clean : 0;
       const wet = st ? st.wetAvg : 0;
-      for (const m of this.skinMats ?? []) m.color.copy(m.userData.base).multiplyScalar(1 - wet * 0.25).lerp(_mud, Math.min(0.8, dirt * 0.7));
+      this.body.setTint(wet, dirt, _mud);
       this.furView.update(ctx.hint);
     }
     this.bow?.update(dt, this);
@@ -1374,8 +1248,8 @@ export class Dog {
 
   dispose() {
     this.furView?.dispose();
-    this.skinMat.dispose();
-    for (const m of this.skinMats ?? []) m.dispose();
+    this.body?.dispose();
+    this.vTongue.material.dispose();
     this.group.removeFromParent();
   }
 }
