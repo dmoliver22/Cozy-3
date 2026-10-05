@@ -18,13 +18,27 @@ const url = server.resolvedUrls.local[0];
 const shots = process.env.SHOTS;
 if (shots) await mkdir(shots, { recursive: true });
 
-const browser = await chromium.launch({
-  executablePath: process.env.CHROMIUM_PATH || undefined,
-  args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'],
-});
+const args = ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'];
+// Prefer the full Chromium build in new headless mode: the old headless shell balloons in memory
+// whenever the page waits on software GL for a while (as it does for the photo), until the
+// renderer is killed.
+async function launch() {
+  if (process.env.CHROMIUM_PATH) return chromium.launch({ executablePath: process.env.CHROMIUM_PATH, args });
+  try {
+    return await chromium.launch({ channel: 'chromium', args });
+  } catch {
+    return chromium.launch({ args });
+  }
+}
+const browser = await launch();
 const page = await browser.newPage({ viewport: { width: 760, height: 480 } });
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
+// Fail fast rather than waiting on a dead page.
+page.on('crash', () => {
+  errors.push('the page crashed');
+  browser.close();
+});
 page.on('console', (m) => m.type() === 'error' && !/Failed to load resource/.test(m.text()) && errors.push(m.text()));
 
 const ev = (fn) => page.evaluate(fn);

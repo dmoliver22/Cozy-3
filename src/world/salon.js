@@ -283,6 +283,8 @@ export class Salon {
     );
     glass.position.set(x0 + 0.03, (wy0 + wy1) / 2, (wz0 + wz1) / 2);
     glass.rotation.y = Math.PI / 2;
+    // The drops are painted only when the glass is about to be drawn, not on every update.
+    glass.onBeforeRender = () => this._paintDroplets();
     this.group.add(glass);
     const letters = new THREE.Mesh(new THREE.PlaneGeometry(2.1, 0.52), new THREE.MeshBasicMaterial({ map: windowLettering(), transparent: true, depthWrite: false }));
     letters.position.set(x0 + 0.035, wy0 + 0.55, (wz0 + wz1) / 2);
@@ -1035,7 +1037,6 @@ export class Salon {
   }
 
   _updateDroplets(dt) {
-    const g = this.dropCtx;
     const W = this.dropCanvas.width, H = this.dropCanvas.height;
     // Spawn a new drop every so often; they cling, then slide when heavy enough.
     if (this.drops.length < 70 && Math.random() < dt * 25) {
@@ -1066,8 +1067,14 @@ export class Salon {
           j--;
         }
       }
+  }
+
+  // Repaint the glass, at most 20 times a second.
+  _paintDroplets() {
     if (this._dropT < 1 / 20) return;
     this._dropT = 0;
+    const g = this.dropCtx;
+    const W = this.dropCanvas.width, H = this.dropCanvas.height;
     g.clearRect(0, 0, W, H);
     g.fillStyle = 'rgba(220,235,240,0.08)';
     g.fillRect(0, 0, W, H);
