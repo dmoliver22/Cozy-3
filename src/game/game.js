@@ -2,12 +2,12 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { Input } from '../core/input.js';
 import { SalonAudio } from '../audio/audio.js';
-import { Salon, STATIONS, TUB, TABLE, COUNTER } from '../world/salon.js';
+import { Salon, STATIONS, TUB, TABLE, COUNTER, SUPPORTS, OBSTACLES } from '../world/salon.js';
 import { Player } from '../player/player.js';
 import { Tools, TOOL_DEFS } from '../tools/tools.js';
 import { Dog } from '../dog/dog.js';
 import { Bow } from '../dog/bow.js';
-import { makeFurMaterial, K, REGION } from '../dog/fur.js';
+import { makeFurMaterial, REGION } from '../dog/fur.js';
 import { BREEDS, CUTS, BOW_COLORS, DOG_NAMES, OWNERS, TEMPERAMENTS, NOTES, GUARDS } from '../dog/breeds.js';
 import { Water, Gel } from '../fx/water.js';
 import { Bubbles } from '../fx/bubbles.js';
@@ -31,22 +31,8 @@ const _to = new THREE.Vector3();
 const _td = new THREE.Vector3();
 const col3 = [0, 0, 0];
 const APPTS_PER_DAY = 3;
-const _lo = new THREE.Vector3();
-const _ld = new THREE.Vector3();
-const _iq = new THREE.Quaternion();
-
-// Does a ray pass through a body's ellipsoid inflated by `pad`?
-function rayHitsEllipsoid(o, d, body, r, pad) {
-  _iq.copy(body.quat).invert();
-  _lo.subVectors(o, body.pos).applyQuaternion(_iq);
-  _ld.copy(d).applyQuaternion(_iq);
-  const rx = r[0] + pad, ry = r[1] + pad, rz = r[2] + pad;
-  _lo.set(_lo.x / rx, _lo.y / ry, _lo.z / rz);
-  _ld.set(_ld.x / rx, _ld.y / ry, _ld.z / rz);
-  const A = _ld.dot(_ld), B = 2 * _lo.dot(_ld), C = _lo.dot(_lo) - 1;
-  const disc = B * B - 4 * A * C;
-  return disc >= 0 && (-B + Math.sqrt(disc)) > 0;
-}
+const DESHED_DONE = 0.85;
+const _grab = {};
 
 export class Game {
   constructor(canvas) {
@@ -204,16 +190,26 @@ export class Game {
     document.body.classList.add('is-touch');
     $('touch').hidden = false;
     this.input.classify = (x, y) => this._classifyTouch(x, y);
+    // The aim reticle floats just above and left of the fingertip, out from under the finger.
+    this.input.reticle = (x, y) => {
+      const off = clamp(0.14 * Math.min(innerWidth, innerHeight), 80, 120);
+      return [x - off * 0.25, Math.max(16, y - off)];
+    };
     this.input.setupTouch({
-      stick: $('stick'), knob: document.querySelector('.stick-knob'), alt: $('t-alt'),
+      stick: $('stick'), knob: document.querySelector('.stick-knob'),
       turnL: $('t-turn-l'), turnR: $('t-turn-r'), crouch: $('t-crouch'), canvas: this.canvas,
+    });
+    // On touch screens the tool's option label is its own button.
+    $('guard').addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      if (!this.modal && this.stage !== 'title') this.tools.alt();
     });
     this.tools._optionLabel();
   }
 
   // How the tool option is triggered, for hints.
   get optKey() {
-    return this.input.touchMode ? 'gear button' : 'R';
+    return this.input.touchMode ? 'tap the tool label' : 'R';
   }
 
   _rayAt(clientX, clientY, origin, dir) {
@@ -222,28 +218,18 @@ export class Game {
     dir.set(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1, 0.5).unproject(this.camera).sub(origin).normalize();
   }
 
-  // A finger landing on the dog grooms it, on an object taps it, anywhere else looks around.
+  // A finger landing on the tool in hand picks it up, on an object taps it, anywhere else (the dog
+  // included) looks around. With the camera out, a tap anywhere takes the photo.
   _classifyTouch(cx, cy) {
     if (this.modal || this.stage === 'title') return 'look';
-    const o = new THREE.Vector3(), d = new THREE.Vector3();
-    this._rayAt(cx, cy, o, d);
     const tool = this.tools.id;
     if (tool === 'camera' && this.stage === 'groom') return 'use';
-    const dog = this.playing ? this.dog : null;
-    if (dog?.fur) {
-      if (dog.raycast(o, d, 5)) return 'use';
-      // A little forgiving around the fluffy silhouette: fingers are fat and fur is soft.
-      const pad = dog.B.fur.len * 0.6 + 0.04;
-      if (rayHitsEllipsoid(o, d, dog.torso, dog.B.torso, pad) || rayHitsEllipsoid(o, d, dog.head, dog.B.head.r, pad)) return 'use';
+    if (tool !== 'camera' && this.playing) {
+      const t = this.tools.screenPos(_grab);
+      if (Math.hypot(cx - t.x, cy - t.y) < t.r) return 'grab';
     }
-    if (tool === 'hands') {
-      for (const b of this.bubbles.items) {
-        if (b.stuck >= 0) continue;
-        _v.subVectors(b.p, o);
-        const t = _v.dot(d);
-        if (t > 0 && _v.lengthSq() - t * t < (b.r + 0.05) ** 2) return 'use';
-      }
-    }
+    const o = new THREE.Vector3(), d = new THREE.Vector3();
+    this._rayAt(cx, cy, o, d);
     if (this._interact(o, d, 8)) return 'tap';
     return 'look';
   }
@@ -251,10 +237,14 @@ export class Game {
   // Touch play: glide to a good viewpoint for each part of the appointment.
   _frameStation(where) {
     if (!this.input.touchMode) return;
-    const back = this.camera.aspect < 0.8 ? 0.4 : 0;
+    const portrait = this.camera.aspect < 0.8;
+    const back = portrait ? 0.4 : 0;
+    // Upright phones keep their buttons down the left edge, so frame the dog a little right of centre.
+    const nudge = portrait ? 0.12 : 0;
     const P = this.player;
-    if (where === 'tub') P.glideTo(new THREE.Vector3(TUB.x, 0, -1.5 + back), new THREE.Vector3(TUB.x, TUB.floor + 0.4, TUB.z));
-    else if (where === 'table') P.glideTo(new THREE.Vector3(TABLE.x - 0.05, 0, -1.25 + back), new THREE.Vector3(TABLE.x, TABLE.y + 0.38, TABLE.z));
+    // Stand off to the side of the dog's run-up so it does not hop through the camera.
+    if (where === 'tub') P.glideTo(new THREE.Vector3(TUB.x + 0.42, 0, -1.45 + back), new THREE.Vector3(TUB.x - 0.08 - nudge, TUB.floor + 0.42, TUB.z));
+    else if (where === 'table') P.glideTo(new THREE.Vector3(TABLE.x - 0.05, 0, -1.25 + back), new THREE.Vector3(TABLE.x - nudge, TABLE.y + 0.38, TABLE.z));
     else if (where === 'lobby') P.glideTo(new THREE.Vector3(0.2, 0, -0.1 + back * 0.5), new THREE.Vector3(1.2, 0.95, 1.7));
   }
 
@@ -343,8 +333,11 @@ export class Game {
       temperament = 'Dramatic';
       note = NOTES.sheepdog[0];
     } else {
+      // Meet every breed before repeats: the golden retriever first, then anyone not seen yet.
+      const seen = (this.save.seen ??= ['sheepdog']);
+      const fresh = Object.keys(BREEDS).filter((k) => !seen.includes(k));
       const keys = Object.keys(BREEDS).filter((k) => k !== this.lastBreed);
-      breedKey = pick(keys, rng);
+      breedKey = fresh.includes('golden') ? 'golden' : fresh.length ? pick(fresh, rng) : pick(keys, rng);
       name = pick(DOG_NAMES[breedKey], rng);
       ownerSpec = pick(OWNERS, rng);
       cutKey = pick(BREEDS[breedKey].cuts, rng);
@@ -353,6 +346,7 @@ export class Game {
       note = pick(NOTES[breedKey], rng);
     }
     this.lastBreed = breedKey;
+    if (!(this.save.seen ??= []).includes(breedKey)) this.save.seen.push(breedKey);
     const B = BREEDS[breedKey];
     const muddy = B.dirt > 0.85 ? 'Very muddy' : B.dirt > 0.72 ? 'Muddy' : 'Grubby';
     return {
@@ -434,7 +428,7 @@ export class Game {
     this.hud.suggest(['spray']);
     this._frameStation('tub');
     await dog.do({ type: 'walk', to: STATIONS.tubFront });
-    await dog.do({ type: 'jump', to: STATIONS.tub, groundY: TUB.floor });
+    await dog.do({ type: 'jump', to: STATIONS.tub, groundY: TUB.floor, support: SUPPORTS.tub, over: OBSTACLES.tub });
     await dog.do({ type: 'turn', yaw: Math.PI / 2 });
     this.stage = 'bath';
     this.bathStart = this.time;
@@ -448,9 +442,9 @@ export class Game {
     const dog = this.dog;
     this.bubbles.releaseAll();
     this._frameStation('table');
-    await dog.do({ type: 'jump', to: STATIONS.tubFront, groundY: 0 });
+    await dog.do({ type: 'jump', to: STATIONS.tubFront, groundY: 0, over: OBSTACLES.tub, rear: true });
     await dog.do({ type: 'walk', to: STATIONS.tableFront });
-    await dog.do({ type: 'jump', to: STATIONS.table, groundY: TABLE.y });
+    await dog.do({ type: 'jump', to: STATIONS.table, groundY: TABLE.y, support: SUPPORTS.table, over: OBSTACLES.table });
     await dog.do({ type: 'turn', yaw: -Math.PI / 2 });
     this.stage = 'groom';
     this.toast('Blow-dry, brush out mats, then clip the cut');
@@ -462,7 +456,7 @@ export class Game {
     const dog = this.dog;
     this.tools.select(0);
     await this._wait(1.2);
-    await dog.do({ type: 'jump', to: STATIONS.tableFront, groundY: 0 });
+    await dog.do({ type: 'jump', to: STATIONS.tableFront, groundY: 0, over: OBSTACLES.table });
     this._frameStation('lobby');
     await dog.do({ type: 'walk', to: new THREE.Vector3(STATIONS.lobby.x, 0, STATIONS.lobby.z - 0.1) });
     await dog.do({ type: 'turn', yaw: Math.atan2(this.owner.group.position.x - dog.torso.pos.x, this.owner.group.position.z - dog.torso.pos.z) });
@@ -523,6 +517,9 @@ export class Game {
     const clean = clamp(st.clean, 0, 1);
     const dry = clamp(st.dry, 0, 1);
     const mats = st.matsTotal ? 1 - st.matsLeft / st.matsTotal : 1;
+    // A shedding coat shares the "coat work" score between mats and undercoat.
+    const deshed = st.sheds ? clamp(st.deshed / DESHED_DONE, 0, 1) : 1;
+    const coatWork = st.sheds ? (st.matsTotal ? (mats + deshed) / 2 : deshed) : mats;
     const wantsCut = A.cut.lengths.some((x) => x != null);
     const cut = clamp(st.cut, 0, 1);
     let bow = 1;
@@ -531,7 +528,7 @@ export class Game {
     let fluff = 0;
     for (let s = 0; s < dog.fur.S; s++) fluff += dog.fur.blown[s];
     fluff /= dog.fur.S;
-    const score = clean * 0.26 + dry * 0.2 + mats * 0.14 + cut * (wantsCut ? 0.24 : 0.1) + bow * 0.06 + happy * 0.1 + (wantsCut ? 0 : 0.14 * fluff);
+    const score = clean * 0.26 + dry * 0.2 + coatWork * 0.14 + cut * (wantsCut ? 0.24 : 0.1) + bow * 0.06 + happy * 0.1 + (wantsCut ? 0 : 0.14 * fluff);
     const stars = clamp(Math.round(score * 5.6 - 0.6), 1, 5);
     const B = dog.B;
     const sizeBonus = B.mass > 20 ? 10 : B.mass > 10 ? 5 : 0;
@@ -544,6 +541,7 @@ export class Game {
       ['Clean', pct(clean)],
       ['Dry & fluffed', pct(dry)],
       ['Mats brushed out', st.matsTotal ? `${st.matsTotal - st.matsLeft} of ${st.matsTotal}` : 'none'],
+      ...(st.sheds ? [['Undercoat out', pct(clamp(st.deshed, 0, 1))]] : []),
       [wantsCut ? `${A.cut.name} match` : 'Fluff factor', wantsCut ? pct(cut) : pct(fluff)],
       ['Bow', A.bow ? (dog.bow ? (bow === 1 ? `${A.bow.name}, perfect` : 'wrong colour') : 'forgot it') : dog.bow ? 'a nice surprise' : 'none asked'],
       ['Happiness', '♥'.repeat(Math.max(1, Math.round(happy * 5)))],
@@ -867,6 +865,7 @@ export class Game {
     const dryDone = st.dry >= 0.95;
     steps.push({ label: 'Blow-dry', val: groomSeen ? `${Math.round(st.dry * 100)}%` : '', pct: groomSeen ? st.dry : null, state: dryDone && bathDone ? 'done' : groomActive ? 'active' : 'todo' });
     if (st.matsTotal) steps.push({ label: 'Brush out mats', val: `${st.matsTotal - st.matsLeft}/${st.matsTotal}`, pct: groomSeen ? 1 - st.matsLeft / st.matsTotal : null, state: st.matsLeft === 0 ? 'done' : groomActive ? 'active' : 'todo' });
+    if (st.sheds) steps.push({ label: 'De-shed the undercoat', val: groomSeen ? `${Math.round(st.deshed * 100)}%` : '', pct: groomSeen ? clamp(st.deshed / DESHED_DONE, 0, 1) : null, state: st.deshed >= DESHED_DONE ? 'done' : groomActive ? 'active' : 'todo' });
     if (wantsCut) steps.push({ label: `Clip: ${A.cut.name}`, val: groomSeen ? `${Math.round(clamp(st.cut, 0, 1) * 100)}%` : '', pct: groomSeen ? st.cut : null, state: st.cut >= 0.85 ? 'done' : groomActive ? 'active' : 'todo' });
     if (A.bow) steps.push({ label: `${A.bow.name} bow`, swatch: A.bow.hex, state: dog.bow ? 'done' : groomActive ? 'active' : 'todo' });
     steps.push({ label: 'Photo & hand back', state: stage === 'handback' || stage === 'checkout' ? 'done' : groomActive ? 'active' : 'todo' });
@@ -880,8 +879,8 @@ export class Game {
       else if (st.clean < 0.8) sug = ['hands', 'spray'];
       else sug = ['spray'];
     } else if (stage === 'groom') {
-      if (!dryDone) sug.push('dryer');
-      if (st.matsLeft) sug.push('brush');
+      if (!dryDone || (st.sheds && st.deshed < DESHED_DONE)) sug.push('dryer');
+      if (st.matsLeft || (st.sheds && st.deshed < DESHED_DONE && dryDone)) sug.push('brush');
       if (wantsCut && st.cut < 0.85) sug.push('clippers');
       if (A.bow && !dog.bow) sug.push('bow');
       if (!sug.length) sug = ['camera'];
@@ -946,7 +945,10 @@ export class Game {
       }
       if (dog && (this.stage === 'bath' || this.stage === 'bathDone' || this.stage === 'groom') && !dog.busy) {
         const turn = (input.down('KeyE') ? 1 : 0) - (input.down('KeyQ') ? 1 : 0);
-        dog.heading -= turn * dt * 1.6;
+        if (turn && dog.support.walls) {
+          // The tub is too narrow to pivot in: hop up and turn around in the air.
+          dog.do({ type: 'jump', to: dog.targetPos.clone(), groundY: dog.groundY, support: dog.support, small: true, time: 0.5, yawInAir: dog.heading + Math.PI });
+        } else dog.heading -= turn * dt * 1.6;
       }
     }
 
@@ -963,16 +965,23 @@ export class Game {
       const res = this.tools.update(dt, { input, dog: this.playing ? dog : null, origin: _o, dir: _d, canUse, stage: stageForTools });
       let hint = this.tools.hint;
       if (input.touchMode) {
-        // The ring and hint follow the grooming finger; taps poke objects.
+        // The reticle and hint ride above the finger holding the tool; taps poke objects.
+        const r = this.canvas.getBoundingClientRect();
         if (input.useFinger != null) {
-          const r = this.canvas.getBoundingClientRect();
-          const fx = r.left + input.cursorX * r.width, fy = r.top + input.cursorY * r.height;
-          this.hud.setFinger(fx, fy, !!res.hit);
-          this.hud.setHint(hint, fx, fy - 70);
+          const ax = r.left + input.cursorX * r.width, ay = r.top + input.cursorY * r.height;
+          this.hud.setFinger(ax, ay, !!res.hit);
+          this.hud.setHint(hint, ax, ay - 64);
+          if (input.grabbing) this._edgePan(dt, input);
         } else {
           this.hud.setFinger(null);
           this.hud.setHint('');
         }
+        // A soft ring round the tool says "pick me up" until you have the hang of it.
+        const offerGrab = !input.grabbing && this.tools.id !== 'camera' && ['bath', 'bathDone', 'groom'].includes(this.stage);
+        if (offerGrab) {
+          const t = this.tools.screenPos(_grab);
+          this.hud.setGrab(t.x, t.y, t.r, input.grabs < 3 ? `Drag the ${TOOL_DEFS[this.tools.index].name.toLowerCase()}` : '');
+        } else this.hud.setGrab(null);
         for (const t of input.takeTaps()) {
           this._rayAt(t.x, t.y, _to, _td);
           this._doInteract(this._interact(_to, _td, 8));
@@ -989,7 +998,10 @@ export class Game {
       }
     } else {
       input.takeTaps();
-      if (input.touchMode) this.hud.setFinger(null);
+      if (input.touchMode) {
+        this.hud.setFinger(null);
+        this.hud.setGrab(null);
+      }
       this.tools.dryerOn = 0;
       if (this.audio.ctx) for (const k of ['spray', 'dryer', 'clip', 'scrub']) this.audio.setLoop(k, 0);
     }
@@ -1008,7 +1020,7 @@ export class Game {
     if (dog && this.stats && this.stats.wetAvg > 0.3 && Math.random() < dt * 30 * this.stats.wetAvg) {
       const s = Math.floor(Math.random() * dog.fur.S);
       if (dog.fur.wet[s] > 0.5) {
-        const i3 = (s * K + K - 1) * 3;
+        const i3 = dog.fur.tipIndex(s) * 3;
         this.water.spawn(dog.fur.pos[i3], dog.fur.pos[i3 + 1] - 0.01, dog.fur.pos[i3 + 2], 0, -0.2, 0, Math.min(1, dog.fur.dirt[s] + dog.fur.loose[s] * 2), 0.006, 2);
       }
     }
@@ -1031,8 +1043,8 @@ export class Game {
         dog.fur.soapAt(p.x, p.y, p.z, 0.11, 1.1 * (this.upgrades.bubbly ? 1.3 : 1));
         for (let i = 0; i < 3; i++) {
           const s = Math.floor(Math.random() * dog.fur.S);
-          const i3 = (s * K + K - 1) * 3;
-          if (Math.hypot(dog.fur.pos[i3] - p.x, dog.fur.pos[i3 + 1] - p.y, dog.fur.pos[i3 + 2] - p.z) < 0.12) this.bubbles.stick(s * K + K - 1, dog.fur);
+          const i3 = dog.fur.tipIndex(s) * 3;
+          if (Math.hypot(dog.fur.pos[i3] - p.x, dog.fur.pos[i3 + 1] - p.y, dog.fur.pos[i3 + 2] - p.z) < 0.12) this.bubbles.stick(dog.fur.tipIndex(s), dog.fur);
         }
         this.bubbles.free(p.clone(), new THREE.Vector3(0, 0.3, 0), 0.015);
       } else this.sparkles.emit('mist', p, { size: 0.04, color: '#f6a8c8', life: 0.4 });
@@ -1053,8 +1065,9 @@ export class Game {
       wind,
       musicOn: this.audio.musicOn,
       clockSeconds: this.apptClock,
-      sprayEnd: this.tools.id === 'spray' ? this.tools.nozzleWorld.clone().addScaledVector(_d, 0.1).add(_v.set(0, -0.04, 0)) : null,
-      dryerEnd: this.tools.id === 'dryer' ? this.tools.nozzleWorld.clone().addScaledVector(_d, 0.25).add(_v.set(0, -0.08, 0)) : null,
+      dog: this.playing ? dog : null,
+      sprayEnd: this.tools.id === 'spray' ? this.tools.hoseEnd : null,
+      dryerEnd: this.tools.id === 'dryer' ? this.tools.hoseEnd : null,
     });
 
     // Stats & stage goals (a few times a second).
@@ -1079,11 +1092,22 @@ export class Game {
     input.endFrame();
   }
 
+  // Dragging a tool towards the screen edge turns the view that way, so a held tool can reach
+  // the far end of the dog without letting go.
+  _edgePan(dt, input) {
+    const x = input.fingerX, y = input.fingerY;
+    const P = this.player;
+    if (x < 0.1) P.yaw += ((0.1 - x) / 0.1) * 1.3 * dt;
+    else if (x > 0.9) P.yaw -= ((x - 0.9) / 0.1) * 1.3 * dt;
+    if (y < 0.14) P.pitch = clamp(P.pitch + ((0.14 - y) / 0.14) * 0.9 * dt, -1.4, 1.35);
+    P.glide = null;
+  }
+
   _shakeFling(dog) {
     const f = dog.fur;
     for (let n = 0; n < 40; n++) {
       const s = Math.floor(Math.random() * f.S);
-      const i3 = (s * K + K - 1) * 3;
+      const i3 = f.tipIndex(s) * 3;
       const vx = (f.pos[i3] - f.prev[i3]) * 120, vy = (f.pos[i3 + 1] - f.prev[i3 + 1]) * 120, vz = (f.pos[i3 + 2] - f.prev[i3 + 2]) * 120;
       if (f.wet[s] > 0.25) {
         this.water.spawn(f.pos[i3], f.pos[i3 + 1], f.pos[i3 + 2], vx * 1.4, vy * 1.4 + 0.5, vz * 1.4, Math.min(1, f.dirt[s] * 0.8), 0.007, 2);
@@ -1142,7 +1166,17 @@ export class Game {
         this.toast(`${A.cut.name} looks right!`);
         this.audio.chime([0, 7, 12]);
       }
-      const ready = st.dry >= 0.95 && st.matsLeft === 0 && (!wantsCut || st.cut >= 0.85) && (!A.bow || dog.bow);
+      if (st.sheds && !this.flags.deshedToast && st.deshed >= DESHED_DONE) {
+        this.flags.deshedToast = true;
+        this.toast('Undercoat all out! Look at that pile');
+        this.audio.chime([0, 5, 9]);
+        this.buzz([20, 30, 20]);
+        dog.please(0.08);
+      } else if (st.sheds && !this.flags.shedHint && st.dry > 0.7 && st.deshed < 0.3 && this.tools.id !== 'brush') {
+        this.flags.shedHint = true;
+        this.toast('Loose undercoat! Blow it out on high, then brush');
+      }
+      const ready = st.dry >= 0.95 && st.matsLeft === 0 && (!st.sheds || st.deshed >= DESHED_DONE) && (!wantsCut || st.cut >= 0.85) && (!A.bow || dog.bow);
       if (ready) {
         this._prompt(this.input.touchMode ? 'All done! Tap for the camera' : 'All done! Grab the camera for the photo', '8', () => this.tools.select(7));
         if (!this.flags.readyToast) {

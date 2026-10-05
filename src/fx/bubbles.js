@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { K } from '../dog/fur.js';
 
 const vert = /* glsl */ `
   varying vec3 vN;
@@ -87,7 +86,7 @@ export class Bubbles {
       b.grow = Math.min(1, b.grow + dt * 6);
       if (b.stuck >= 0) {
         const f = b.fur;
-        const s = (b.stuck / K) | 0;
+        const s = (b.stuck / f.K) | 0;
         const p3 = b.stuck * 3;
         const tx = f.pos[p3] + b.off.x, ty = f.pos[p3 + 1] + b.off.y, tz = f.pos[p3 + 2] + b.off.z;
         b.v.set((tx - b.p.x) / Math.max(dt, 1e-3), (ty - b.p.y) / Math.max(dt, 1e-3), (tz - b.p.z) / Math.max(dt, 1e-3));

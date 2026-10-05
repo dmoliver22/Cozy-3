@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { RigidBody, orientationError } from '../core/rigid.js';
 import { Spring, Pendulum } from '../core/springs.js';
 import { clamp, lerp, mulberry32, smoothstep } from '../core/math.js';
-import { Fur, FurView, K, REGION } from './fur.js';
+import { Fur, makeFurView, REGION, OPEN_GROUND } from './fur.js';
 import { BREEDS, CUTS } from './breeds.js';
 import { QUALITY } from '../core/quality.js';
 
@@ -218,6 +218,7 @@ export class Dog {
         paw: new THREE.Vector3(), pawPrev: new THREE.Vector3(),
         plant: new THREE.Vector3(),
         stepping: false, stepT: 0, stepDur: 0.15, stepFrom: new THREE.Vector3(),
+        hold: null, holdT: 0, // a paw placed up on a ledge
         group: i === 0 || i === 3 ? 0 : 1,
         hipW: new THREE.Vector3(),
       });
@@ -233,17 +234,20 @@ export class Dog {
       E.kind === 'floppy'
         ? [[0.5 * side, -0.6, 0.15], [0.15 * side, -1, 0.05]]
         : [[0.35 * side, 1, -0.1], [0.2 * side, 1, -0.15]];
-    const earStiff = E.kind === 'floppy' ? 0.06 : 0.45;
+    const earStiff = E.stiff ?? (E.kind === 'floppy' ? 0.06 : 0.45);
     this.earL = new Chain(2, E.seg, [E.at[0], E.at[1], E.at[2]], earDirs(1), earStiff, 0.88, 1);
     this.earR = new Chain(2, E.seg, [-E.at[0], E.at[1], E.at[2]], earDirs(-1), earStiff, 0.88, 1);
 
     // ---------- Control state ----------
     this.groundY = 0;
+    this.support = OPEN_GROUND; // what the paws stand on: floor, tub (with walls) or table
     this.targetPos = new THREE.Vector3();
     this.heading = 0;
     this.headingVel = 0;
     this.airborne = false;
     this.air = null;
+    this.rear = 0; // 0..1: up on the hind legs with the front paws on a ledge
+    this.rearTarget = 0;
     this.actions = [];
     this.wag = 0;
     this.wagPhase = 0;
@@ -308,10 +312,13 @@ export class Dog {
   }
 
   // Place the dog standing at (x, groundY, z) facing yaw.
-  place(x, groundY, z, yaw = 0) {
+  place(x, groundY, z, yaw = 0, support = null) {
     const B = this.B;
     this.groundY = groundY;
+    this.support = support ?? { ...OPEN_GROUND, y: groundY, below: groundY };
     this.heading = yaw;
+    this.rear = this.rearTarget = 0;
+    for (const L of this.legs) L.hold = null;
     this.targetPos.set(x, groundY + B.stand, z);
     this.torso.pos.copy(this.targetPos);
     this.torso.quat.setFromAxisAngle(UP, yaw);
@@ -346,7 +353,7 @@ export class Dog {
     const cut = CUTS[this.cutKey] ?? CUTS.tidy;
     this.fur = new Fur({ parts, dog: this, breed: B, seed: this.seed, cut });
     this.fur.init(this.frames, this.colliders);
-    this.furView = new FurView(this.fur, furMaterial);
+    this.furView = makeFurView(this.fur, furMaterial);
     this.group.add(this.furView.mesh);
     this.furView.update();
   }
@@ -377,6 +384,22 @@ export class Dog {
     const N = Math.round(B.fur.count * QUALITY.fur);
     const cnt = (a) => Math.max(6, Math.round((N * a) / total));
 
+    const F = B.fur;
+    const silky = F.type === 'silky', wiry = F.type === 'wiry';
+    const sign = (v) => (v < 0 ? -1 : 1);
+    const eyeY = B.eyes.at[1];
+    // Wiry breeds grow bushy eyebrows just above each eye.
+    const isBrow = (P) => {
+      if (!F.brows) return false;
+      const dx = Math.abs(P[0]) - B.eyes.at[0], dy = P[1] - eyeY, dz = P[2] - B.eyes.at[2];
+      return dy > -0.002 && dy < B.eyes.r * 3.2 && Math.abs(dx) < B.eyes.r * 2.6 && dz > -B.eyes.r * 3 && P[2] > 0;
+    };
+    // Shih tzu style topknot: the crown is gathered up into a plume.
+    const isTopknot = (P) => F.topknot && P[1] > 0.32 * hy && P[2] < 0.45 * hz;
+    // Feathering: longer hair on the backs of the legs and under the tail.
+    const legFeather = (P, Nn) => 1 + (F.feather ?? 0) * smoothstep(0.1, 0.85, -Nn[1]);
+    const tailFeather = (P, Nn) => (silky ? 1 + 0.75 * Math.max(0, -Nn[0]) : 1);
+
     parts.push({
       name: 'torso', bone: this.boneTorso, kind: 'ellipsoid', center: [0, 0, 0], radii: [rx, ry, rz], pole: 'z',
       count: cnt(torsoA),
@@ -387,7 +410,12 @@ export class Dog {
         if (y < -0.45) return REGION.belly;
         return REGION.back;
       },
-      groom: (P, Nn) => [Nn[0] * 0.3, Nn[1] * 0.2 - 0.8, Nn[2] * 0.2 - 0.5],
+      groom: (P, Nn) => {
+        // A parted coat falls away from the spine to either side.
+        if (F.part) return [sign(P[0]) * 0.6 + Nn[0] * 0.2, -0.85, -0.12];
+        if (silky) return [Nn[0] * 0.25, Nn[1] * 0.15 - 0.75, Nn[2] * 0.15 - 0.65];
+        return [Nn[0] * 0.3, Nn[1] * 0.2 - 0.8, Nn[2] * 0.2 - 0.5];
+      },
       color: coat('torso'),
     });
     parts.push({
@@ -401,13 +429,18 @@ export class Dog {
         const d = p.clone().sub(snoutC);
         return (d.x / sn.r[0]) ** 2 + (d.y / sn.r[1]) ** 2 + (d.z / sn.r[2]) ** 2 < 0.8;
       },
-      region: (P) => (P[2] > 0.3 * hz && P[1] < 0.3 * hy ? REGION.face : REGION.headtop),
+      region: (P) => (isBrow(P) ? REGION.brows : P[2] > 0.3 * hz && P[1] < 0.3 * hy ? REGION.face : REGION.headtop),
       groom: (P, Nn) => {
+        if (isBrow(P)) return [sign(P[0]) * 0.3, 0.05, 1];
+        if (isTopknot(P)) return [Nn[0] * 0.15, 1, -0.3];
+        if (F.topknot) return [Nn[0] * 0.45, -0.9, 0.2];
         if (fringe && P[2] > -0.25 * hz && P[1] > -0.2 * hy) return [Nn[0] * 0.2, -0.75, 0.65];
         if (P[2] > 0.3 * hz) return [Nn[0] * 0.3, -0.5, 0.6];
         return [Nn[0] * 0.3, Nn[1] * 0.3 - 0.3, -0.9];
       },
-      lenScale: (P) => (fringe && P[2] > 0 && P[1] > 0 ? 1.15 : 1),
+      lenScale: (P) => (fringe && P[2] > 0 && P[1] > 0 ? 1.15 : isTopknot(P) ? 0.85 : 1),
+      stiffMul: (P) => (isTopknot(P) ? 3.2 : isBrow(P) ? 1.6 : 1),
+      standMul: (P) => (isTopknot(P) || isBrow(P) ? 0.15 : 1),
       color: coat('head'),
     });
     parts.push({
@@ -417,19 +450,20 @@ export class Dog {
         const z = (P[2] - sn.at[2]) / sn.r[2];
         const y = (P[1] - sn.at[1]) / sn.r[1];
         if (z > 0.55) return true; // nose & lips
-        if (y < -0.5 && z > 0) return true; // mouth
+        if (y < -0.5 && z > 0 && !F.beard) return true; // mouth (a beard grows right over it)
         // inside head
         return (P[0] / hx) ** 2 + (P[1] / hy) ** 2 + (P[2] / hz) ** 2 < 0.85;
       },
       region: () => REGION.face,
-      groom: (P, Nn) => [Nn[0] * 0.4, Nn[1] * 0.3 - 0.4, 0.8],
-      color: coat('head'),
+      // Beards and moustaches hang down; ordinary muzzles are groomed forward.
+      groom: (P, Nn) => (F.beard || F.topknot ? [Nn[0] * 0.3, -0.85, 0.45] : [Nn[0] * 0.4, Nn[1] * 0.3 - 0.4, 0.8]),
+      color: coat('snout'),
     });
     parts.push({
       name: 'neck', bone: this.boneNeck, kind: 'seg', radius: () => B.neckR,
       count: cnt(neckA),
       region: () => REGION.neck,
-      groom: (P, Nn) => [Nn[0] * 0.3, Nn[1] * 0.3, -1],
+      groom: (P, Nn) => (silky ? [Nn[0] * 0.25, Nn[1] * 0.25 - 0.5, -0.8] : [Nn[0] * 0.3, Nn[1] * 0.3, -1]),
       color: coat('neck'),
     });
     this.legs.forEach((L, i) => {
@@ -437,7 +471,8 @@ export class Dog {
         name: L.name + '_u', bone: this.boneLegs[i][0], kind: 'seg', radius: () => B.legR,
         count: cnt(legA[i][0]),
         region: () => REGION.legs,
-        groom: (P, Nn) => [Nn[0] * 0.3, Nn[1] * 0.3, 1],
+        groom: (P, Nn) => [Nn[0] * 0.3, Nn[1] * (wiry ? 0.15 : 0.3), 1],
+        lenScale: legFeather,
         color: coat(L.name),
       });
       parts.push({
@@ -445,7 +480,8 @@ export class Dog {
         count: cnt(legA[i][1]),
         exclude: (P, Nn, t) => t > 0.93,
         region: () => REGION.paws,
-        groom: (P, Nn) => [Nn[0] * 0.3, Nn[1] * 0.3, 1],
+        groom: (P, Nn) => [Nn[0] * 0.3, Nn[1] * (wiry ? 0.15 : 0.3), 1],
+        lenScale: (P, Nn) => 1 + ((F.feather ?? 0) * 0.6) * smoothstep(0.1, 0.85, -Nn[1]),
         color: coat(L.name),
       });
     });
@@ -454,7 +490,9 @@ export class Dog {
         name: 'tail', bone: b, kind: 'seg', radius: () => B.tail.r,
         count: cnt(tailA),
         region: () => (j === this.boneTail.length - 1 ? REGION.tailtip : REGION.tail),
-        groom: (P, Nn) => [Nn[0] * 0.45, Nn[1] * 0.45, 1],
+        // Silky tails drape as a flag; other coats bottle-brush out.
+        groom: (P, Nn) => (silky ? [Nn[0] * 0.2, Nn[1] * 0.2, 1] : [Nn[0] * 0.45, Nn[1] * 0.45, 1]),
+        lenScale: tailFeather,
         color: coat('tail'),
       });
     });
@@ -511,6 +549,17 @@ export class Dog {
       const e = new THREE.Mesh(skinGeo, dark);
       e.scale.setScalar(B.eyes.r);
       eg.add(e);
+      if (B.eyes.color) {
+        // Iris as a lens on the front of the eye, with the pupil in the middle.
+        const iris = new THREE.Mesh(skinGeo, new THREE.MeshStandardMaterial({ color: B.eyes.color, roughness: 0.2, emissive: B.eyes.color, emissiveIntensity: 0.15 }));
+        iris.scale.set(B.eyes.r * 0.82, B.eyes.r * 0.82, B.eyes.r * 0.45);
+        iris.position.set(0, 0, B.eyes.r * 0.62);
+        eg.add(iris);
+        const pupil = new THREE.Mesh(skinGeo, dark);
+        pupil.scale.set(B.eyes.r * 0.4, B.eyes.r * 0.4, B.eyes.r * 0.25);
+        pupil.position.set(0, 0, B.eyes.r * 0.9);
+        eg.add(pupil);
+      }
       const s = new THREE.Mesh(skinGeo, shine);
       s.scale.setScalar(B.eyes.r * 0.32);
       s.position.set(B.eyes.r * 0.25 * side, B.eyes.r * 0.35, B.eyes.r * 0.75);
@@ -617,13 +666,26 @@ export class Dog {
     for (const L of this.legs) {
       T.localToWorld(L.hip, L.hipW);
       if (this.airborne) {
-        // Tuck the paws under the body while flying.
-        T.dirToWorld(_a.set(0, -1, L.front ? 0.25 : -0.25), _a).normalize();
-        _b.copy(L.hipW).addScaledVector(_a, (L.L1 + L.L2) * 0.72);
+        // Flying legs: on the way up the front paws fold tight under the chest while the hind legs
+        // trail from the push-off; on the way down the front paws reach for the landing and the
+        // hind paws tuck in under the belly.
+        const up = smoothstep(-1.5, 1.5, T.vel.y);
+        const fz = L.front ? 0.45 - 0.3 * up : -0.1 - 0.8 * up;
+        const reach = L.front ? 0.85 - 0.43 * up : 0.42 + 0.33 * up;
+        T.dirToWorld(_a.set(0, -1, fz), _a).normalize();
+        _b.copy(L.hipW).addScaledVector(_a, (L.L1 + L.L2) * reach);
         const v = _c.subVectors(L.paw, L.pawPrev).multiplyScalar(0.9);
         L.pawPrev.copy(L.paw);
         L.paw.add(v);
         L.paw.lerp(_b, 0.25);
+      } else if (L.hold) {
+        // Paw lifted onto a ledge (rearing up on the tub rim): one arcing step, then it stays.
+        L.holdT = Math.min(1, L.holdT + h / 0.24);
+        const e = L.holdT * L.holdT * (3 - 2 * L.holdT);
+        L.paw.lerpVectors(L.stepFrom, L.hold, e);
+        L.paw.y += Math.sin(Math.PI * e) * legScale * 0.18;
+        L.plant.copy(L.paw);
+        L.stepping = false;
       } else {
         // Where the paw would like to be: under the hip, leading in the direction of travel.
         _a.set(L.hipW.x + T.vel.x * 0.16, this.groundY, L.hipW.z + T.vel.z * 0.16);
@@ -678,7 +740,7 @@ export class Dog {
     if (!this.airborne) {
       const breathe = Math.sin(this.time * (this.tongue.value > 0.3 ? 9 : 2.2)) * 0.003;
       _a.copy(this.targetPos);
-      _a.y = this.groundY + B.stand + breathe + this.crouch;
+      _a.y = this.groundY + B.stand + breathe + this.crouch + this.rear * B.stand * 0.18;
       const kp = 160, kd = 15, kpy = 220, kdy = 13;
       T.vel.x += (kp * (_a.x - T.pos.x) - kd * T.vel.x) * h;
       T.vel.z += (kp * (_a.z - T.pos.z) - kd * T.vel.z) * h;
@@ -687,7 +749,7 @@ export class Dog {
       T.vel.y -= 9.81 * h;
     }
     // Torso orientation: heading, plus pitch while flying, plus hip wiggle from the wag.
-    const pitch = this.airborne ? clamp(-T.vel.y * 0.18, -0.5, 0.5) : 0;
+    const pitch = this.airborne ? clamp(-T.vel.y * 0.18, -0.5, 0.5) : -0.4 * this.rear;
     _eul.set(pitch, this.heading + this.wagHip, 0, 'YXZ');
     _q.setFromEuler(_eul);
     orientationError(T.quat, _q, _a);
@@ -731,11 +793,15 @@ export class Dog {
     H.angVel.y += (kph * _a.y - kdh * H.angVel.y) * h;
     H.angVel.z += (kph * _a.z - kdh * H.angVel.z) * h;
 
+    // Muscles damp the body on the ground; in the air nothing should slow a leap down.
+    T.linDamping = this.airborne ? 0 : 1.2;
+    H.linDamping = this.airborne ? 0.3 : 1.5;
     T.integrate(h);
     H.integrate(h);
 
-    // Never sink through the surface.
-    const minY = this.groundY + B.torso[1] * 0.7;
+    // Never sink through the surface (while flying, the lower of take-off and landing).
+    const gy = this.airborne && this.air ? Math.min(this.groundY, this.air.groundY) : this.groundY;
+    const minY = gy + B.torso[1] * 0.7;
     if (T.pos.y < minY) {
       T.pos.y = minY;
       if (T.vel.y < 0) T.vel.y *= -0.2;
@@ -751,6 +817,8 @@ export class Dog {
   clearActions() {
     for (const a of this.actions) a.resolve?.();
     this.actions.length = 0;
+    for (const L of this.legs) L.hold = null;
+    this.rearTarget = 0;
   }
 
   get busy() {
@@ -799,25 +867,47 @@ export class Dog {
           if (Math.hypot(a.to.x - T.pos.x, a.to.z - T.pos.z) > 0.15) a.yaw = want;
         }
         if (a.phase === 'crouch') {
+          let facing = true;
           if (a.yaw != null) {
             const err = Math.atan2(Math.sin(a.yaw - this.heading), Math.cos(a.yaw - this.heading));
             this.heading += clamp(err, -4 * dt, 4 * dt);
+            // Square up to the jump before gathering for it.
+            if (Math.abs(err) > 0.12) {
+              a.t = 0;
+              facing = false;
+            }
           }
-          this.crouch = -0.25 * this.B.stand * smoothstep(0, 0.25, a.t);
-          if (a.t > 0.3) {
-            // Launch on a ballistic arc to the landing spot.
+          // Hopping out over a wall right in front: paws up on the rim first, then over.
+          if (facing && a.rear && !a.reared && a.over && this._rearUp(a)) {
+            a.reared = true;
+            a.phase = 'rear';
+            a.t = 0;
+            break;
+          }
+          const low = a.small || a.reared;
+          this.crouch = -(low ? 0.12 : 0.25) * this.B.stand * smoothstep(0, 0.25, a.t);
+          if (a.t > (low ? 0.2 : 0.3)) {
+            // Launch on a ballistic arc to the landing spot, high enough to clear the obstacle.
             const tgt = new THREE.Vector3(a.to.x, a.groundY + this.B.stand, a.to.z);
+            const Tf = a.time ?? this.flightTime(T.pos, tgt, a.over, a.reared);
+            for (const L of this.legs) L.hold = null;
+            this.rearTarget = 0;
             const d = tgt.clone().sub(T.pos);
-            const horiz = Math.hypot(d.x, d.z);
-            const Tf = 0.42 + horiz * 0.18 + Math.max(0, d.y) * 0.35;
             const v = new THREE.Vector3(d.x / Tf, (d.y + 0.5 * 9.81 * Tf * Tf) / Tf, d.z / Tf);
             T.vel.copy(v);
             this.head.vel.copy(v);
             this.crouch = 0;
             this.airborne = true;
-            this.air = { t: 0, Tf, tgt, groundY: a.groundY };
+            this.air = { t: 0, Tf, tgt, groundY: a.groundY, support: a.support ?? null, p0: T.pos.clone(), v0: v.clone() };
+            if (a.yawInAir != null) this.heading = a.yawInAir;
             a.phase = 'fly';
             this.onEvent?.('jump', this);
+          }
+        } else if (a.phase === 'rear') {
+          // Up on the hind legs with the front paws on the rim; a beat to gather.
+          if (a.t > 0.5) {
+            a.phase = 'crouch';
+            a.t = 0;
           }
         } else if (a.phase === 'fly') {
           if (!this.airborne) {
@@ -851,12 +941,17 @@ export class Dog {
     const air = this.air;
     air.t += dt;
     const T = this.torso;
-    // Steer gently toward the landing spot (dogs adjust mid-air).
-    T.vel.x += (air.tgt.x - T.pos.x) * dt * 2;
-    T.vel.z += (air.tgt.z - T.pos.z) * dt * 2;
+    // Hold the line of the leap: the neck spring tugs the body about in flight, so ease it back
+    // onto the ballistic path it launched on (sideways only; height is left to gravity).
+    const k = Math.min(1, dt * 6);
+    T.pos.x += (air.p0.x + air.v0.x * air.t - T.pos.x) * k;
+    T.pos.z += (air.p0.z + air.v0.z * air.t - T.pos.z) * k;
+    T.vel.x += (air.v0.x - T.vel.x) * k;
+    T.vel.z += (air.v0.z - T.vel.z) * k;
     if ((air.t > air.Tf * 0.5 && T.pos.y <= air.tgt.y && T.vel.y < 0) || air.t > air.Tf * 2.5) {
       this.airborne = false;
       this.groundY = air.groundY;
+      this.support = air.support ?? { ...OPEN_GROUND, y: air.groundY, below: air.groundY };
       this.targetPos.set(air.tgt.x, air.tgt.y, air.tgt.z);
       for (const L of this.legs) {
         T.localToWorld(L.hip, L.hipW);
@@ -959,6 +1054,7 @@ export class Dog {
     this.time += dt;
     this.crouch = this.crouch ?? 0;
     if (!this.actions.length || this.actions[0].type !== 'jump') this.crouch *= Math.exp(-dt * 8);
+    this.rear += (this.rearTarget - this.rear) * (1 - Math.exp(-dt * 7));
     this._runActions(dt);
     this._behaviour(dt, ctx);
     if (this.shakeT >= 0) {
@@ -984,7 +1080,7 @@ export class Dog {
       this._collideChains();
       this._updateFrames();
       this._updateColliders();
-      if (fur && i % 2 === 1) fur.step(h * 2, this.frames, this.colliders, this.groundY);
+      if (fur && i % 2 === 1) fur.step(h * 2, this.frames, this.colliders, this.airborne ? AIR_GROUND : this.support);
     }
     this.tail.clearWind();
     this.earL.clearWind();
@@ -1101,6 +1197,90 @@ export class Dog {
     return this._statsCache;
   }
 
+  // How far below the torso centre the lowest point of a tucked, flying dog hangs.
+  // Put the front paws up on the edge of the obstacle the dog is about to leave (the tub rim):
+  // straight ahead from each front hip to the edge, then back onto the wall top. False when the
+  // edge is out of reach, in which case the dog just jumps.
+  _rearUp(a) {
+    const over = a.over, T = this.torso;
+    const dx = Math.sin(a.yaw ?? this.heading), dz = Math.cos(a.yaw ?? this.heading);
+    const holds = [];
+    for (const L of this.legs) {
+      if (!L.front) continue;
+      T.localToWorld(L.hip, L.hipW);
+      let t = Infinity;
+      if (dx > 1e-4) t = Math.min(t, (over.x1 - L.hipW.x) / dx);
+      else if (dx < -1e-4) t = Math.min(t, (over.x0 - L.hipW.x) / dx);
+      if (dz > 1e-4) t = Math.min(t, (over.z1 - L.hipW.z) / dz);
+      else if (dz < -1e-4) t = Math.min(t, (over.z0 - L.hipW.z) / dz);
+      t -= 0.045;
+      if (!(t > 0.02)) return false;
+      const p = new THREE.Vector3(L.hipW.x + dx * t, over.y - 0.005, L.hipW.z + dz * t);
+      if (p.distanceTo(L.hipW) > (L.L1 + L.L2) * 1.05 + this.B.stand * 0.25) return false;
+      holds.push([L, p]);
+    }
+    for (const [L, p] of holds) {
+      L.hold = p;
+      L.holdT = 0;
+      L.stepFrom.copy(L.paw);
+    }
+    this.rearTarget = 1;
+    this.onEvent?.('pawstep', holds[0][0]);
+    return true;
+  }
+
+  // How far the folded paws hang below the torso centre while crossing an edge: front paws are
+  // folded tight on the way up, hind paws tucked on the way down (see _stepLegs).
+  tuckDepth(front) {
+    const B = this.B;
+    const hipY = -(front ? B.hipF[1] : B.hipB[1]);
+    const pawFur = B.fur.len * (B.fur.regions?.paws ?? 1) * 0.5;
+    return hipY + this.legLen * (front ? 0.45 : 0.47) + B.legR + pawFur;
+  }
+
+  // Flight time for a hop from p0 to p1. With an obstacle ({x0,x1,z0,z1,y}: a footprint and its top),
+  // the arc is raised until the tucked paws, belly and rump all pass over its edge.
+  flightTime(p0, p1, over, pawsUp = false) {
+    const g = 9.81;
+    const dx = p1.x - p0.x, dz = p1.z - p0.z;
+    const horiz = Math.hypot(dx, dz);
+    // Snappy for short hops, and enough time to rise to a higher landing with a little to spare.
+    let Tf = Math.max(0.36 + horiz * 0.15, Math.sqrt((2 * Math.max(0, p1.y - p0.y)) / g) * 1.18 + 0.04);
+    if (!over || horiz < 1e-3) return Tf;
+    // Where does the straight path cross the footprint's edge? (slab test)
+    let t0 = -Infinity, t1 = Infinity;
+    for (const [o, d, lo, hi] of [[p0.x, dx, over.x0, over.x1], [p0.z, dz, over.z0, over.z1]]) {
+      if (Math.abs(d) < 1e-9) {
+        if (o < lo || o > hi) return Tf;
+        continue;
+      }
+      let a = (lo - o) / d, b = (hi - o) / d;
+      if (a > b) [a, b] = [b, a];
+      t0 = Math.max(t0, a);
+      t1 = Math.min(t1, b);
+    }
+    if (t0 > t1) return Tf;
+    const B = this.B;
+    // Folded front paws ride a little ahead of the hips; the nose-up launch lifts them and the
+    // nose-down dive lifts the rump, which the margins allow for.
+    const front = (B.hipF[2] + 0.08) / horiz, back = (-B.hipB[2] + 0.06) / horiz;
+    for (const fc of [t0, t1]) {
+      if (fc <= 0.001 || fc >= 0.999) continue;
+      // Front paws cross first (unless they are already up on the edge), then belly, then hind paws.
+      for (const [f, need] of [
+        [pawsUp ? -1 : fc - front, over.y + this.tuckDepth(true) + 0.02],
+        [fc, over.y + B.torso[1] + B.fur.len * 0.5 + 0.03],
+        [fc + back, over.y + this.tuckDepth(false) - 0.04],
+      ]) {
+        if (f <= 0.02 || f >= 0.98) continue;
+        const ff = clamp(f, 0.04, 0.96);
+        const base = p0.y + (p1.y - p0.y) * ff;
+        if (need > base) Tf = Math.max(Tf, Math.sqrt((2 * (need - base)) / (g * ff * (1 - ff))));
+      }
+    }
+    return Math.min(Tf, 1.25);
+  }
+
   // Aim test against fur, then bare skin (for short-clipped dogs).
   raycast(origin, dir, maxT = 3) {
     const f = this.fur.raycast(origin.x, origin.y, origin.z, dir.x, dir.y, dir.z, maxT);
@@ -1153,4 +1333,5 @@ export class Dog {
 }
 
 const _mud = new THREE.Color('#7A5A3C');
-export { K };
+// While flying the coat collides with nothing but the room floor.
+const AIR_GROUND = { ...OPEN_GROUND };

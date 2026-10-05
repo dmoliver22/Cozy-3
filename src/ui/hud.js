@@ -11,7 +11,7 @@ export class Hud {
       hud: $('hud'), day: $('hud-day'), clock: $('hud-clock'), money: $('hud-money'),
       job: $('job'), jobDog: $('job-dog'), jobReq: $('job-req'), steps: $('job-steps'),
       cross: $('crosshair'), hint: $('hint'), toasts: $('toasts'), prompt: $('prompt'),
-      speech: $('speech'), hotbar: $('hotbar'), guard: $('guard'), flash: $('flash'), finger: $('finger'),
+      speech: $('speech'), hotbar: $('hotbar'), guard: $('guard'), flash: $('flash'), finger: $('finger'), grab: $('grab'),
     };
     this.slots = [];
     this.slotSprings = [];
@@ -118,6 +118,25 @@ export class Hud {
     f.style.left = `${x}px`;
     f.style.top = `${y}px`;
     f.style.borderColor = hot ? 'rgba(242, 179, 139, 0.95)' : 'rgba(247, 250, 250, 0.9)';
+  }
+
+  // The "pick me up" ring around the tool in hand on touch screens.
+  setGrab(x, y, r, label) {
+    const g = this.el.grab;
+    if (x == null) {
+      if (!g.hidden) g.hidden = true;
+      return;
+    }
+    g.hidden = false;
+    const d = Math.round(r * 1.5);
+    g.style.left = `${Math.round(x - d / 2)}px`;
+    g.style.top = `${Math.round(y - d / 2)}px`;
+    g.style.width = g.style.height = `${d}px`;
+    if (label !== this._grabLabel) {
+      this._grabLabel = label;
+      g.firstElementChild.textContent = label;
+      g.firstElementChild.hidden = !label;
+    }
   }
 
   setCrosshair(hot, free) {

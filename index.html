@@ -38,16 +38,16 @@
         <button id="prompt" class="prompt" hidden></button>
         <div id="speech" class="speech" hidden></div>
         <div id="hotbar" class="hotbar" role="toolbar" aria-label="Grooming tools"></div>
-        <div id="guard" class="guard-tag" hidden></div>
+        <button id="guard" class="guard-tag" hidden></button>
       </div>
 
       <div id="touch" class="touch" hidden>
+        <div id="grab" class="grab-ring" hidden><span></span></div>
         <div id="finger" class="finger-ring" hidden></div>
         <div id="stick" class="stick" aria-label="Walk"><div class="stick-knob"></div></div>
         <div class="touch-buttons">
           <button id="t-turn-l" class="tbtn" aria-label="Turn the dog left"><svg viewBox="0 0 24 24"><path d="M7 7.5A7 7 0 1 1 5 13" /><path d="M7 3v5h5" /></svg></button>
           <button id="t-turn-r" class="tbtn" aria-label="Turn the dog right"><svg viewBox="0 0 24 24"><path d="M17 7.5A7 7 0 1 0 19 13" /><path d="M17 3v5h-5" /></svg></button>
-          <button id="t-alt" class="tbtn" aria-label="Tool option"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" /><path d="M12 2.8v3M12 18.2v3M2.8 12h3M18.2 12h3M5.5 5.5l2.1 2.1M16.4 16.4l2.1 2.1M5.5 18.5l2.1-2.1M16.4 7.6l2.1-2.1" /></svg></button>
           <button id="t-crouch" class="tbtn" aria-label="Crouch"><svg viewBox="0 0 24 24"><path d="M12 4v11" /><path d="M7 10l5 5 5-5" /><path d="M5 20h14" /></svg></button>
         </div>
       </div>
@@ -61,10 +61,10 @@
             <button id="btn-reset" class="btn btn-ghost" hidden>Start a fresh salon</button>
           </div>
           <dl class="controls controls-touch">
-            <div><dt>Touch the dog</dt><dd>Groom right there</dd></div>
+            <div><dt>Drag the tool</dt><dd>Spray, scrub, brush, clip</dd></div>
             <div><dt>Drag elsewhere</dt><dd>Look around</dd></div>
             <div><dt>Tool bar</dt><dd>Pick a tool</dd></div>
-            <div><dt>Gear button</dt><dd>Tool option</dd></div>
+            <div><dt>Tool label</dt><dd>Tap for the option</dd></div>
             <div><dt>Turn buttons</dt><dd>Turn the dog</dd></div>
             <div><dt>Tap things</dt><dd>Treats, bell, catalogue</dd></div>
           </dl>

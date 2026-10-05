@@ -116,27 +116,37 @@ export class Input {
     return !this.locked && !this.touchMode;
   }
 
-  // Aim from the cursor (mouse without lock) or from the grooming finger (touch).
+  // Aim from the cursor (mouse without lock) or from the grooming finger's reticle (touch). The
+  // frame a finger lets go still aims where it was, so a dragged bow drops where it was released.
   get aimFromCursor() {
-    return this.touchMode ? this.useFinger != null : !this.locked;
+    return this.touchMode ? this.useFinger != null || this.released : !this.locked;
   }
 
-  // Touch: every finger is classified when it lands. A finger on the dog grooms right where it
-  // touches, a finger on an object is a tap, anything else drags the view around.
+  // Touch: every finger is classified when it lands. A finger on the tool in hand picks it up and
+  // drags it (the tool aims at a reticle just above the fingertip, so the finger never hides what
+  // you are grooming), a finger on an object is a tap, anything else drags the view around.
   setupTouch(els) {
     if (this.touchReady) return;
     this.touchReady = true;
     this.touchMode = true;
     this.use = false;
-    const { stick, knob, alt, turnL, turnR, crouch, canvas } = els;
+    const { stick, knob, turnL, turnR, crouch, canvas } = els;
     this.taps = [];
     this.useFinger = null;
+    this.grabbing = false;
+    this.released = false;
+    this.fingerX = this.fingerY = 0.5;
+    this.grabs = 0;
     this.crouch = false;
     const fingers = new Map();
-    const norm = (e) => {
+    // Normalised finger and aim positions; a grabbed tool aims at the reticle above the finger.
+    const norm = (e, grab) => {
       const r = canvas.getBoundingClientRect();
-      this.cursorX = (e.clientX - r.left) / r.width;
-      this.cursorY = (e.clientY - r.top) / r.height;
+      this.fingerX = (e.clientX - r.left) / r.width;
+      this.fingerY = (e.clientY - r.top) / r.height;
+      const [ax, ay] = grab && this.reticle ? this.reticle(e.clientX, e.clientY) : [e.clientX, e.clientY];
+      this.cursorX = (ax - r.left) / r.width;
+      this.cursorY = (ay - r.top) / r.height;
     };
 
     canvas.addEventListener('pointerdown', (e) => {
@@ -144,11 +154,13 @@ export class Input {
       e.preventDefault();
       try { canvas.setPointerCapture(e.pointerId); } catch { /* ignore */ }
       let mode = this.classify?.(e.clientX, e.clientY) ?? 'look';
-      if (mode === 'use' && this.useFinger != null) mode = 'look';
+      if ((mode === 'use' || mode === 'grab') && this.useFinger != null) mode = 'look';
       fingers.set(e.pointerId, { mode, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, moved: 0, t: performance.now() });
-      if (mode === 'use') {
+      if (mode === 'use' || mode === 'grab') {
         this.useFinger = e.pointerId;
-        norm(e);
+        this.grabbing = mode === 'grab';
+        if (this.grabbing) this.grabs++;
+        norm(e, this.grabbing);
         this.use = true;
         this.usePressed = true;
       }
@@ -161,7 +173,7 @@ export class Input {
       f.x = e.clientX;
       f.y = e.clientY;
       f.moved += Math.abs(dx) + Math.abs(dy);
-      if (f.mode === 'use') norm(e);
+      if (f.mode === 'use' || f.mode === 'grab') norm(e, f.mode === 'grab');
       else {
         if (f.mode === 'tap' && f.moved > 12) f.mode = 'look';
         if (f.mode === 'look') {
@@ -174,9 +186,11 @@ export class Input {
       const f = fingers.get(e.pointerId);
       if (!f) return;
       fingers.delete(e.pointerId);
-      if (f.mode === 'use') {
+      if (f.mode === 'use' || f.mode === 'grab') {
         this.use = false;
         this.useFinger = null;
+        this.grabbing = false;
+        this.released = e.type === 'pointerup';
       } else if (f.moved < 12 && performance.now() - f.t < 450 && e.type === 'pointerup') {
         this.taps.push({ x: e.clientX, y: e.clientY });
       }
@@ -227,7 +241,6 @@ export class Input {
       btn.addEventListener('pointercancel', up);
       btn.addEventListener('pointerleave', up);
     };
-    hold(alt, () => (this.altPressed = true));
     hold(turnL, () => this.keys.add('KeyQ'), () => this.keys.delete('KeyQ'));
     hold(turnR, () => this.keys.add('KeyE'), () => this.keys.delete('KeyE'));
     crouch.addEventListener('pointerdown', (e) => {
@@ -253,6 +266,7 @@ export class Input {
   endFrame() {
     this.pressed.clear();
     this.usePressed = false;
+    this.released = false;
     this.altPressed = false;
     this.wheel = 0;
   }

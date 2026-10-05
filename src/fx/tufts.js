@@ -8,7 +8,8 @@ const _e = new THREE.Euler();
 const _w = new THREE.Vector3();
 
 // Clipped-off fur: light, draggy tufts that flutter down, pile up on the table and the floor,
-// and scatter again when the dryer catches them.
+// and scatter again when the dryer catches them. Shed undercoat is lighter still (`light` 1): it
+// drifts on the dryer's wind like dandelion fluff before it settles.
 export class Tufts {
   constructor(scene, material, cap = 1400) {
     this.cap = cap;
@@ -21,6 +22,7 @@ export class Tufts {
     const n = new Float32Array(cap * 3);
     for (let i = 0; i < cap; i++) n[i * 3 + 1] = 1;
     this.mesh.geometry.setAttribute('aN', new THREE.InstancedBufferAttribute(n, 3));
+    this.mesh.geometry.setAttribute('aGloss', new THREE.InstancedBufferAttribute(new Float32Array(cap), 1));
     this.mesh.frustumCulled = false;
     this.mesh.castShadow = true;
     this.mesh.receiveShadow = true;
@@ -28,9 +30,10 @@ export class Tufts {
     scene.add(this.mesh);
   }
 
-  spawn(x, y, z, vx, vy, vz, r, color) {
+  spawn(x, y, z, vx, vy, vz, r, color, light = 0) {
     if (this.items.length >= this.cap) this.items.shift();
     this.items.push({
+      light,
       p: new THREE.Vector3(x, y, z),
       v: new THREE.Vector3(vx, vy, vz),
       r: Math.max(0.006, r),
@@ -39,7 +42,7 @@ export class Tufts {
       rot: new THREE.Vector3(Math.random() * 6, Math.random() * 6, Math.random() * 6),
       spin: new THREE.Vector3((Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8),
       seed: Math.random() * 100,
-      flat: 0.55 + Math.random() * 0.3,
+      flat: light ? 0.75 + Math.random() * 0.25 : 0.55 + Math.random() * 0.3,
     });
   }
 
@@ -49,17 +52,18 @@ export class Tufts {
       wind?.(t.p, _w);
       if (t.rest) {
         // Settled tufts only move if the dryer is strong enough to lift them.
-        if (_w.lengthSq() > 30) {
+        if (_w.lengthSq() > (t.light ? 12 : 30)) {
           t.rest = false;
           t.v.set(_w.x * 0.02, 0.4 + Math.random() * 0.4, _w.z * 0.02);
         } else continue;
       }
-      // Fur falls like a feather: heavy drag, a little flutter.
-      t.v.y -= 9.81 * dt;
-      t.v.x += (_w.x * 0.9 + Math.sin(time * 6 + t.seed) * 1.2) * dt;
-      t.v.y += _w.y * 0.9 * dt;
-      t.v.z += (_w.z * 0.9 + Math.cos(time * 5 + t.seed) * 1.2) * dt;
-      const drag = Math.exp(-4.2 * dt);
+      // Fur falls like a feather: heavy drag, a little flutter. Undercoat fluff barely falls at all.
+      const L = t.light, catchWind = 0.9 + L * 0.7;
+      t.v.y -= 9.81 * (1 - 0.72 * L) * dt;
+      t.v.x += (_w.x * catchWind + Math.sin(time * 6 + t.seed) * (1.2 + L)) * dt;
+      t.v.y += _w.y * catchWind * dt;
+      t.v.z += (_w.z * catchWind + Math.cos(time * 5 + t.seed) * (1.2 + L)) * dt;
+      const drag = Math.exp(-(4.2 + L * 2.5) * dt);
       t.v.multiplyScalar(drag);
       t.p.addScaledVector(t.v, dt);
       t.rot.addScaledVector(t.spin, dt);

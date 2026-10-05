@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { STATIONS, TUB, TABLE } from '../world/salon.js';
+import { STATIONS, TUB, TABLE, SUPPORTS } from '../world/salon.js';
 import { Dog } from '../dog/dog.js';
 import { CUTS, BREEDS, BOW_COLORS } from '../dog/breeds.js';
 
@@ -96,7 +96,7 @@ export function installDebug(game) {
       cutKey = cutKey ?? B.cuts[0];
       const dog = new Dog({ breedKey, seed: 42, cutKey, name: 'Lab' });
       const st = where === 'tub' ? STATIONS.tub : STATIONS.table;
-      dog.place(st.x, st.y, st.z, where === 'tub' ? Math.PI / 2 : -Math.PI / 2);
+      dog.place(st.x, st.y, st.z, where === 'tub' ? Math.PI / 2 : -Math.PI / 2, where === 'tub' ? SUPPORTS.tub : SUPPORTS.table);
       dog.growFur(game.furMaterial);
       dog.windAt = game.tools.windAt;
       dog.onEvent = (t, d) => game._dogEvent(t, d);

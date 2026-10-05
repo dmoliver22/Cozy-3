@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { fbm3 } from '../core/math.js';
-import { REGION } from './fur.js';
+import { REGION, REGION_COUNT } from './fur.js';
 
 const col = (hex) => {
   const c = new THREE.Color(hex);
@@ -23,7 +23,7 @@ export const GUARDS = [
 
 const R = REGION;
 function lengths(map) {
-  const arr = new Array(12).fill(null);
+  const arr = new Array(REGION_COUNT).fill(null);
   for (const [k, v] of Object.entries(map)) arr[R[k]] = v;
   return arr;
 }
@@ -64,6 +64,18 @@ export const CUTS = {
     detail: 'Fluffy pants #2 · legs & paws #2',
     lengths: lengths({ rear: 0.035, legs: 0.035, paws: 0.035 }),
     price: 35,
+  },
+  schnauzer: {
+    name: 'Schnauzer Cut',
+    detail: 'Short jacket #1 · keep the beard, brows and skirt',
+    lengths: lengths({ back: 0.02, rear: 0.02, neck: 0.02, headtop: 0.02, ears: 0.02, tail: 0.02, tailtip: 0.02, chest: 0.035 }),
+    price: 50,
+  },
+  deshed: {
+    name: 'De-shed & Fluff',
+    detail: 'No clipping. Brush and blow out every bit of undercoat.',
+    lengths: lengths({}),
+    price: 45,
   },
   feathers: {
     name: 'Feather Trim',
@@ -164,7 +176,7 @@ export const BREEDS = {
     ears: { kind: 'upright', at: [0.058, 0.07, -0.01], seg: 0.045, w: 0.055 },
     tail: { at: [0, 0.05, -0.24], segs: 2, seg: 0.04, dirs: [[0, 0.2, -1], [0, 0, -1]], stiff: 0.3, r: 0.03 },
     fur: {
-      len: 0.045, count: 850, puff: 0.022, curl: 0.05, stiff: 0.32, stand: 0.3,
+      type: 'double', len: 0.045, count: 850, puff: 0.022, curl: 0.05, stiff: 0.32, stand: 0.3, shed: 0.55,
       regions: { rear: 1.8, chest: 1.5, neck: 1.4, face: 0.5, ears: 0.6, tail: 1.6, tailtip: 1.6, legs: 1.2 },
     },
     dirt: 0.85,
@@ -226,20 +238,27 @@ export const BREEDS = {
     eyes: { at: [0.043, 0.022, 0.085], r: 0.0195 },
     ears: { kind: 'floppy', at: [0.083, 0.04, -0.01], seg: 0.05, w: 0.055 },
     tail: { at: [0, 0.07, -0.28], segs: 4, seg: 0.07, dirs: [[0, 0.2, -1], [0, -0.1, -1], [0, -0.3, -1], [0, -0.35, -1]], stiff: 0.2, r: 0.025 },
+    // Long, wavy, glossy top coat that lies flat, with feathering on legs, belly, chest and tail.
     fur: {
-      len: 0.07, count: 1050, puff: 0.025, curl: 0.12, stiff: 0.2, stand: 0.24,
-      regions: { tail: 1.8, tailtip: 1.8, chest: 1.6, belly: 1.5, legs: 1.3, ears: 1.2, face: 0.35, headtop: 0.5, paws: 0.7 },
+      type: 'silky', segs: 4,
+      len: 0.08, count: 1500, puff: 0.027, curl: 0.2, waveStep: 1.25, stiff: 0.13, stand: 0.05, gloss: 0.9, feather: 1.2,
+      regions: { tail: 1.7, tailtip: 2.0, chest: 1.6, neck: 1.45, belly: 1.6, rear: 1.4, legs: 0.7, ears: 0.7, face: 0.16, headtop: 0.26, paws: 0.4 },
     },
     dirt: 0.9,
     mats: 4,
     bark: 0.85,
     cuts: ['tidy', 'feathers', 'feathers'],
     coat(part, P, region, rng) {
-      const gold = col('#d9a056'), light = col('#efcf96');
-      if ([R.chest, R.belly, R.tail, R.tailtip, R.legs].includes(region)) return vary(mix(gold, light, 0.55), rng);
+      const gold = col('#c8873c'), light = col('#e2b571'), deep = col('#a8642a');
+      if ([R.chest, R.belly, R.tail, R.tailtip].includes(region)) return vary(mix(gold, light, 0.5 + rng() * 0.2), rng);
+      if (region === R.legs || region === R.paws) return vary(mix(gold, light, 0.35), rng);
+      if (region === R.ears) return vary(mix(gold, deep, 0.35), rng);
+      // A slightly richer saddle along the back.
+      if (part === 'torso' && P[1] > 0.05) return vary(mix(gold, deep, 0.2), rng);
       return vary(gold, rng);
     },
-    skin: '#e2b98a',
+    // Short hair over the muzzle and skull reads as smooth gold.
+    skin: '#c8893f',
   },
   bichon: {
     name: 'Bichon Frise',
@@ -269,6 +288,121 @@ export const BREEDS = {
     },
     skin: '#f1e3da',
   },
+  shihtzu: {
+    name: 'Shih Tzu',
+    mass: 6,
+    torso: [0.085, 0.09, 0.14],
+    stand: 0.19,
+    hipF: [0.05, -0.05, 0.085],
+    hipB: [0.05, -0.045, -0.09],
+    legR: 0.024,
+    neck: [0, 0.05, 0.11],
+    neckR: 0.045,
+    head: { r: [0.075, 0.072, 0.07], at: [0, 0.11, 0.17] },
+    snout: { r: [0.03, 0.026, 0.026], at: [0, -0.022, 0.06] },
+    eyes: { at: [0.034, 0.013, 0.057], r: 0.0175 },
+    ears: { kind: 'floppy', at: [0.062, 0.035, -0.01], seg: 0.04, w: 0.04 },
+    tail: { at: [0, 0.06, -0.12], segs: 3, seg: 0.04, dirs: [[0, 1, -0.3], [0, 0.8, 0.5], [0, 0.2, 1]], stiff: 0.3, r: 0.018 },
+    // Floor-length straight silk, parted down the spine, with a topknot and moustache.
+    fur: {
+      type: 'silky', segs: 5,
+      len: 0.16, count: 1100, puff: 0.022, curl: 0.05, waveStep: 0.8, stiff: 0.11, stand: 0.05, gloss: 1, part: true, topknot: true,
+      regions: { face: 0.7, headtop: 0.9, ears: 1.15, tail: 0.7, tailtip: 0.8, paws: 0.55, legs: 0.8, neck: 1.0, chest: 0.95, belly: 0.85 },
+    },
+    dirt: 0.75,
+    mats: 5,
+    bark: 0.15,
+    cuts: ['puppy', 'teddy', 'tidy'],
+    coat(part, P, region, rng) {
+      const gold = col('#d8a463'), white = col('#f8f4ec'), cream = col('#efdcbc');
+      // Classic gold-and-white: white blaze, muzzle, chest and paws; gold ears and saddle.
+      if (part === 'snout' || region === R.face) return vary(white, rng, 0.03);
+      if (part === 'head') return Math.abs(P[0]) < 0.018 ? vary(white, rng, 0.03) : vary(mix(gold, cream, 0.15), rng);
+      if (part === 'ear') return vary(gold, rng);
+      if (region === R.chest || region === R.belly || region === R.paws) return vary(white, rng, 0.03);
+      if (part === 'torso') return P[1] > -0.02 && mottled(P, 14) > 0.42 ? vary(gold, rng) : vary(mix(white, cream, 0.4), rng);
+      if (part === 'tail') return vary(mix(gold, white, 0.4), rng);
+      return vary(mix(white, cream, 0.3), rng);
+    },
+    skin: '#efd9c4',
+  },
+  schnauzer: {
+    name: 'Miniature Schnauzer',
+    mass: 8,
+    torso: [0.095, 0.11, 0.17],
+    stand: 0.29,
+    hipF: [0.055, -0.07, 0.11],
+    hipB: [0.055, -0.065, -0.12],
+    legR: 0.026,
+    neck: [0, 0.07, 0.13],
+    neckR: 0.045,
+    head: { r: [0.058, 0.066, 0.085], at: [0, 0.155, 0.2] },
+    snout: { r: [0.038, 0.04, 0.072], at: [0, -0.03, 0.088] },
+    eyes: { at: [0.031, 0.02, 0.07], r: 0.0155 },
+    ears: { kind: 'floppy', at: [0.042, 0.06, -0.005], seg: 0.03, w: 0.042, stiff: 0.2 },
+    tail: { at: [0, 0.075, -0.16], segs: 2, seg: 0.035, dirs: [[0, 1, -0.35], [0, 1, -0.1]], stiff: 0.45, r: 0.02 },
+    // A harsh, bristly jacket with soft furnishings: big beard, bushy brows, a leg and belly skirt.
+    fur: {
+      type: 'wiry', segs: 3,
+      len: 0.045, count: 1050, puff: 0.021, curl: 0.2, waveStep: 2.6, stiff: 0.34, stand: 0.34, brows: true, beard: true,
+      regions: { face: 2.1, brows: 1.9, legs: 1.75, paws: 1.6, belly: 1.85, chest: 1.3, back: 0.85, rear: 0.85, neck: 0.9, headtop: 0.7, ears: 0.55, tail: 0.8, tailtip: 0.8 },
+    },
+    dirt: 0.85,
+    mats: 3,
+    bark: 0.4,
+    cuts: ['schnauzer', 'schnauzer', 'puppy'],
+    coat(part, P, region, rng) {
+      // Salt and pepper: every bristle is dark, silver or banded; furnishings run silvery white.
+      const dark = col('#3c3f44'), salt = col('#b4b8bd'), silver = col('#dcdfe2');
+      const furnish = [R.face, R.brows, R.legs, R.paws, R.belly].includes(region) || part === 'snout';
+      if (furnish) return vary(mix(salt, silver, 0.4 + rng() * 0.6), rng, 0.04);
+      return vary(mix(dark, salt, rng() < 0.5 ? rng() * 0.35 : 0.55 + rng() * 0.45), rng, 0.05);
+    },
+    skin: '#9a9a9e',
+  },
+  husky: {
+    name: 'Siberian Husky',
+    mass: 22,
+    torso: [0.13, 0.145, 0.27],
+    stand: 0.45,
+    hipF: [0.07, -0.085, 0.16],
+    hipB: [0.07, -0.075, -0.18],
+    legR: 0.038,
+    neck: [0, 0.08, 0.21],
+    neckR: 0.065,
+    head: { r: [0.09, 0.088, 0.098], at: [0, 0.19, 0.32] },
+    snout: { r: [0.045, 0.042, 0.075], at: [0, -0.035, 0.1] },
+    eyes: { at: [0.042, 0.024, 0.082], r: 0.0185, color: '#7cc6ef' },
+    ears: { kind: 'upright', at: [0.052, 0.075, -0.015], seg: 0.045, w: 0.05 },
+    tail: { at: [0, 0.07, -0.26], segs: 3, seg: 0.07, dirs: [[0, 0.7, -1], [0, 1, -0.2], [0, 0.6, 0.6]], stiff: 0.28, r: 0.03 },
+    // A plush stand-up double coat stuffed with undercoat that comes out in clumps.
+    fur: {
+      type: 'double', segs: 3,
+      len: 0.06, count: 1500, puff: 0.019, curl: 0.06, stiff: 0.3, stand: 0.55, shed: 0.85,
+      regions: { neck: 1.5, chest: 1.3, rear: 1.45, tail: 2.0, tailtip: 2.0, face: 0.35, headtop: 0.55, ears: 0.5, legs: 0.7, paws: 0.5, belly: 1.1 },
+    },
+    dirt: 0.8,
+    mats: 2,
+    bark: 0.75,
+    cuts: ['deshed', 'deshed', 'pants'],
+    coat(part, P, region, rng) {
+      const grey = col('#5d636a'), dark = col('#3b3f45'), white = col('#f4f3f0'), mid = col('#9aa0a7');
+      if (part === 'snout' || region === R.face) return vary(white, rng, 0.03);
+      if (part === 'head') {
+        // Dark cap with a widow's peak between the eyes; white mask below.
+        const cap = P[1] > 0.02 || P[2] < -0.02 || (Math.abs(P[0]) < 0.012 && P[1] > -0.01);
+        return cap ? vary(mix(dark, grey, 0.4), rng) : vary(white, rng, 0.03);
+      }
+      if (part === 'ear') return vary(dark, rng);
+      if (region === R.belly || region === R.chest || region === R.paws) return vary(white, rng, 0.03);
+      if (part === 'torso') return P[1] > -0.03 ? vary(mix(dark, grey, 0.3 + rng() * 0.4), rng) : vary(mix(white, mid, 0.15), rng);
+      if (part === 'neck') return P[1] > 0 ? vary(grey, rng) : vary(white, rng, 0.03);
+      if (part === 'tail') return region === R.tailtip ? vary(mix(white, mid, 0.2), rng) : vary(mix(grey, mid, rng()), rng);
+      if (region === R.legs) return vary(mix(white, mid, 0.25), rng);
+      return vary(mix(grey, white, 0.4), rng);
+    },
+    skin: '#7d8288',
+  },
 };
 
 export const DOG_NAMES = {
@@ -278,6 +412,9 @@ export const DOG_NAMES = {
   pomeranian: ['Mochi', 'Pom Pom', 'Tofu', 'Tangerine', 'Puffin', 'Kiki'],
   golden: ['Sunny', 'Honey', 'Maple', 'Butter', 'Rufus', 'Goldie'],
   bichon: ['Puff', 'Marshmallow', 'Cloud', 'Snowy', 'Cotton', 'Meringue'],
+  shihtzu: ['Lulu', 'Bao', 'Mei Mei', 'Tinkerbell', 'Dumpling', 'Peony'],
+  schnauzer: ['Gus', 'Otto', 'Fritz', 'Pepper', 'Professor', 'Mustache'],
+  husky: ['Koda', 'Luna', 'Nanook', 'Blizzard', 'Sitka', 'Echo'],
 };
 
 export const OWNERS = [
@@ -304,6 +441,9 @@ export const NOTES = {
   pomeranian: ['Smaller than the mud she is wearing.', 'Please make her round again.', 'Sneezes at blow dryers. Be gentle!'],
   golden: ['Swam the whole lake. Twice.', 'Tail is a weapon, mind the shelves.', 'Brings everyone a sock. Sorry in advance.'],
   bichon: ['Was white this morning. Promise.', 'Garden. Rain. Joy. Mud.', 'She wants to be a marshmallow.'],
+  shihtzu: ['Her hair touches the floor. And the mud. And the soup.', 'Topknot please, she is royalty.', 'Dragged her whole coat through the garden.'],
+  schnauzer: ['His beard is holding snacks for later. Please empty it.', 'The eyebrows are non-negotiable.', 'He looks like a tiny grumpy professor and we love it.'],
+  husky: ['She is blowing her coat. My hoover has given up.', 'He sings when he is happy. Prepare yourself.', 'There is a whole second dog of fluff in there.'],
 };
 
 // The coat pattern noise a few breeds use for subtle mottling.

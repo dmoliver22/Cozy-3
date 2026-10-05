@@ -3,7 +3,7 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { Spring, Spring3 } from '../core/springs.js';
 import { clamp, smoothstep } from '../core/math.js';
 import { GUARDS, BOW_COLORS } from '../dog/breeds.js';
-import { REGION, K } from '../dog/fur.js';
+import { REGION } from '../dog/fur.js';
 
 export const TOOL_DEFS = [
   { id: 'hands', name: 'Hands', verb: 'Scrub · pet · pop bubbles' },
@@ -30,6 +30,10 @@ const _q = new THREE.Quaternion();
 const _m = new THREE.Matrix4();
 const FWD = new THREE.Vector3(0, 0, -1);
 const col3 = [0, 0, 0];
+
+// How far in front of the eye a tool held by a finger floats (metres).
+const GRAB_DEPTH = 0.42;
+const onHead = (r) => r === REGION.headtop || r === REGION.ears || r === REGION.face || r === REGION.brows;
 
 // Launch velocity that arcs from `from` through `to` at roughly `speed`.
 function ballistic(from, to, speed, out) {
@@ -87,7 +91,11 @@ function buildModels() {
     const trigger = rbox(0.018, 0.05, 0.02, 0.008, M('#F2B38B'));
     trigger.position.set(0, -0.03, -0.02);
     g.add(trigger);
-    models.spray = { g, tip: new THREE.Vector3(0, 0.01, -0.15), trigger, rose };
+    // The hose plugs into a chrome fitting on the bottom of the grip.
+    const fitting = new THREE.Mesh(new THREE.CylinderGeometry(0.017, 0.014, 0.03, 14), steel);
+    fitting.position.set(0, -0.068, 0);
+    handle.add(fitting);
+    models.spray = { g, tip: new THREE.Vector3(0, 0.01, -0.15), trigger, rose, hose: { mesh: handle, at: new THREE.Vector3(0, -0.08, 0), dir: new THREE.Vector3(0, -1, 0) } };
   }
   // Shampoo bottle.
   {
@@ -127,7 +135,10 @@ function buildModels() {
     fan.position.z = -0.17;
     fan.rotation.y = Math.PI;
     g.add(fan);
-    models.dryer = { g, tip: new THREE.Vector3(0, 0, -0.18), fan };
+    const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.022, 0.035, 14), M('#b9a2e6'));
+    cuff.position.set(0, -0.07, 0);
+    handle.add(cuff);
+    models.dryer = { g, tip: new THREE.Vector3(0, 0, -0.18), fan, hose: { mesh: handle, at: new THREE.Vector3(0, -0.084, 0), dir: new THREE.Vector3(0, -1, 0) } };
   }
   // Slicker brush.
   {
@@ -249,6 +260,8 @@ export class Tools {
     this.target = new THREE.Vector3();
     this.nozzleWorld = new THREE.Vector3();
     this.nozzleDir = new THREE.Vector3(0, 0, -1);
+    // Where the hose plugs into the tool in hand (world), and the way it leaves the fitting.
+    this.hoseEnd = { at: new THREE.Vector3(), dir: new THREE.Vector3(0, -1, 0) };
     this.dryerOn = 0;
     this.sprayAcc = 0;
     this.gelAcc = 0;
@@ -277,8 +290,10 @@ export class Tools {
     const sal = this.game.salon;
     sal.sprayHose.mesh.visible = this.id === 'spray';
     sal.dryerHose.mesh.visible = this.id === 'dryer';
-    if (this.id === 'spray') sal.sprayHose.reset(sal.faucetPos, this.nozzleWorld.lengthSq() ? this.nozzleWorld : sal.faucetPos);
-    if (this.id === 'dryer') sal.dryerHose.reset(sal.dryerOrigin, this.nozzleWorld.lengthSq() ? this.nozzleWorld : sal.dryerOrigin);
+    // Lay the hose out from the wall to where the tool will be in hand.
+    const inHand = this.camera.localToWorld(_c.copy(this.rest).add(_b.set(0, -0.12, 0)));
+    if (this.id === 'spray') sal.sprayHose.reset(sal.faucetPos, inHand);
+    if (this.id === 'dryer') sal.dryerHose.reset(sal.dryerOrigin, inHand);
     this._optionLabel();
   }
 
@@ -320,16 +335,30 @@ export class Tools {
 
   _optionLabel() {
     let label = '';
-    const how = this.game.input.touchMode ? 'gear to change' : 'R to change';
     if (this.id === 'clippers') {
       const gd = GUARDS[this.guard];
-      label = `Guard #${gd.n} · ${Math.round(gd.len * 100)} cm  (${how})`;
-    } else if (this.id === 'bow') label = `${BOW_COLORS[this.bowColor].name} ribbon  (${how})`;
-    else if (this.id === 'spray') label = `${this.sprayMode ? 'Gentle shower' : 'Jet stream'}  (${how})`;
-    else if (this.id === 'dryer') label = `${this.dryerHigh ? 'High' : 'Low'} power  (${how})`;
-    else if (this.id === 'shampoo') label = `${SCENTS[this.scent].name}  (${how})`;
+      label = `Guard #${gd.n} · ${Math.round(gd.len * 100)} cm`;
+    } else if (this.id === 'bow') label = `${BOW_COLORS[this.bowColor].name} ribbon`;
+    else if (this.id === 'spray') label = this.sprayMode ? 'Gentle shower' : 'Jet stream';
+    else if (this.id === 'dryer') label = `${this.dryerHigh ? 'High' : 'Low'} power`;
+    else if (this.id === 'shampoo') label = SCENTS[this.scent].name;
+    // On touch screens the label itself is the button that changes it.
+    if (label) label += this.game.input.touchMode ? '  ↻' : '  (R to change)';
     this.game.hud.setGuard(label);
     if (this.id === 'clippers') this.models.clippers.guard.scale.y = 0.6 + this.guard * 0.25;
+  }
+
+  // Where the tool in hand sits on screen (client px), and how big a target it makes for a finger.
+  screenPos(out = {}) {
+    const p = this.rig.position;
+    const tanV = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
+    const d = Math.max(0.05, -p.z);
+    const nx = p.x / (d * tanV * this.camera.aspect), ny = p.y / (d * tanV);
+    const r = this.game.canvas.getBoundingClientRect();
+    out.x = r.left + (nx * 0.5 + 0.5) * r.width;
+    out.y = r.top + (0.5 - ny * 0.5) * r.height;
+    out.r = Math.max(60, (0.085 / (d * tanV)) * r.height * 0.5);
+    return out;
   }
 
   // Dryer wind field: everything that can flutter asks this.
@@ -367,9 +396,18 @@ export class Tools {
     this.target.copy(origin).addScaledVector(dir, hit ? hit.t : 2.5);
 
     // ---------- Viewmodel physics ----------
-    // Keep the held tool inside narrow (portrait) views.
     const tanV = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2));
-    this.rest.set(Math.min(0.22, tanV * this.camera.aspect * 0.45 * 0.62), -Math.min(0.2, tanV * 0.45 * 0.6), -0.45);
+    const aspect = this.camera.aspect;
+    const touch = input.touchMode;
+    if (touch) {
+      // On touch screens the tool waits in the lower right, clear of the stick and buttons, ready
+      // to be picked up.
+      const portrait = aspect < 0.8;
+      this.rest.set((portrait ? 0.5 : 0.56) * tanV * aspect * GRAB_DEPTH, (portrait ? -0.42 : -0.36) * tanV * GRAB_DEPTH, -GRAB_DEPTH);
+    } else {
+      // Keep the held tool inside narrow (portrait) views.
+      this.rest.set(Math.min(0.22, tanV * aspect * 0.45 * 0.62), -Math.min(0.2, tanV * 0.45 * 0.6), -0.45);
+    }
     const m = this.current;
     const reaching = m.reach && use && reachable;
     if (reaching) {
@@ -378,6 +416,10 @@ export class Tools {
       this.camera.worldToLocal(_a);
       _a.y -= 0.02;
       this.pos.target.copy(_a);
+    } else if (touch && input.grabbing) {
+      // Held by a finger: the tool sits under the fingertip and points at the reticle above it.
+      const nx = input.fingerX * 2 - 1, ny = 1 - input.fingerY * 2;
+      this.pos.target.set(nx * tanV * aspect * GRAB_DEPTH, ny * tanV * GRAB_DEPTH, -GRAB_DEPTH);
     } else {
       this.pos.target.copy(this.rest);
       if (this.id === 'camera') this.pos.target.set(0, -0.08, -0.32);
@@ -407,6 +449,10 @@ export class Tools {
     this.rig.updateMatrixWorld(true);
     m.g.localToWorld(this.nozzleWorld.copy(m.tip));
     this.nozzleDir.subVectors(this.target, this.nozzleWorld).normalize();
+    if (m.hose) {
+      m.hose.mesh.localToWorld(this.hoseEnd.at.copy(m.hose.at));
+      this.hoseEnd.dir.copy(m.hose.dir).transformDirection(m.hose.mesh.matrixWorld);
+    }
 
     // ---------- Tool behaviour ----------
     let sprayLevel = 0, dryLevel = 0, clipLevel = 0, scrubLevel = 0;
@@ -507,13 +553,22 @@ export class Tools {
           if (dog?.fur) {
             const res = dog.fur.blow(this.nozzleWorld.x, this.nozzleWorld.y, this.nozzleWorld.z, this.nozzleDir.x, this.nozzleDir.y, this.nozzleDir.z, power, 1.2, dt, up.cloud ? 1.4 : 1);
             dog.blowChains(this.nozzleWorld, this.nozzleDir, power, 1.2);
+            const f = dog.fur;
             for (const pi of res.fling) {
               const p3 = pi * 3;
-              const f = dog.fur;
               g.water.spawn(f.pos[p3], f.pos[p3 + 1], f.pos[p3 + 2],
                 this.nozzleDir.x * 2.2 + (Math.random() - 0.5), this.nozzleDir.y * 2.2 + Math.random() * 0.6, this.nozzleDir.z * 2.2 + (Math.random() - 0.5),
                 0.05, 0.006, 2);
             }
+            // Blowing coat: loose undercoat lifts off in drifting clouds of fluff.
+            for (const s of res.shedFly) {
+              const p3 = f.tipIndex(s) * 3;
+              f.undercoatColor(s, col3);
+              g.tufts.spawn(f.pos[p3], f.pos[p3 + 1], f.pos[p3 + 2],
+                this.nozzleDir.x * 1.6 + (Math.random() - 0.5) * 0.8, this.nozzleDir.y * 1.6 + 0.3 + Math.random() * 0.5, this.nozzleDir.z * 1.6 + (Math.random() - 0.5) * 0.8,
+                f.puff[s] * (1.1 + Math.random() * 0.8), [...col3], 1);
+            }
+            if (res.shedFly.length && !this.hint) this.hint = 'Blowing out the undercoat!';
             if (res.face > 0.3) {
               dog.squint = 1;
               if (this.dryerHigh) {
@@ -548,6 +603,16 @@ export class Tools {
             this.hint = 'Brushing';
           } else this.hint = 'Stroke the brush through the coat';
           for (const mi of res.cleared) g.onMatCleared(mi);
+          // Dead undercoat comes away in soft clumps that drift off the brush.
+          if (res.shed > 0) {
+            const f = dog.fur;
+            for (const s of res.shedAt) {
+              f.undercoatColor(s, col3);
+              g.tufts.spawn(hit.point.x, hit.point.y + 0.02, hit.point.z, stroke.x * 0.6 + (Math.random() - 0.5) * 0.4, 0.4 + Math.random() * 0.4, stroke.z * 0.6 + (Math.random() - 0.5) * 0.4,
+                f.puff[s] * (1 + Math.random() * 0.6), [...col3], 1);
+            }
+            if (!res.tangle) this.hint = 'So much undercoat!';
+          }
         }
         break;
       }
@@ -582,11 +647,12 @@ export class Tools {
         break;
       }
       case 'bow': {
-        if (usePressed && reachable && dog) {
-          if (hit.region === REGION.headtop || hit.region === REGION.ears || hit.region === REGION.face) {
-            g.placeBow(hit.point, BOW_COLORS[this.bowColor].hex);
-          } else this.hint = 'Bows go on the head';
-        } else if (reachable) this.hint = hit.region === REGION.headtop || hit.region === REGION.ears ? 'Click to tie the bow here' : 'Aim at the head';
+        // Click to tie it on; on touch, drag the bow over and let go on the head.
+        const drop = touch ? input.released && ctx.canUse : usePressed;
+        if (drop && reachable && dog) {
+          if (onHead(hit.region)) g.placeBow(hit.point, BOW_COLORS[this.bowColor].hex);
+          else this.hint = 'Bows go on the head';
+        } else if (reachable) this.hint = onHead(hit.region) ? (touch ? 'Let go to tie the bow here' : 'Click to tie the bow here') : 'Aim at the head';
         break;
       }
       case 'camera': {

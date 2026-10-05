@@ -11,18 +11,38 @@ import { QUALITY } from '../core/quality.js';
 
 // Room layout (metres). The player looks at the back wall: tub on the left, grooming table on the right.
 export const ROOM = { x0: -3, x1: 3, z0: -3, z1: 2.6, h: 2.8 };
-export const TUB = { x: -1.25, z: -2.62, w: 1.4, d: 0.76, rim: 0.88, floor: 0.4, wall: 0.045 };
+export const TUB = { x: -1.25, z: -2.62, w: 1.4, d: 0.76, rim: 0.8, floor: 0.34, wall: 0.045 };
 export const TABLE = { x: 1.25, z: -2.15, w: 1.1, d: 0.62, y: 0.8 };
 export const COUNTER = { x0: 2.05, x1: 2.95, z0: 0.3, z1: 2.0, y: 1.0 };
 export const DOOR = { x: 1.25, w: 0.95, h: 2.1 };
+
+// What a dog can stand on: a floor height inside a footprint (the room floor outside it), and walls.
+export const SUPPORTS = {
+  tub: {
+    y: TUB.floor, below: 0, walls: true, top: TUB.rim,
+    x0: TUB.x - TUB.w / 2 + TUB.wall, x1: TUB.x + TUB.w / 2 - TUB.wall,
+    z0: TUB.z - TUB.d / 2 + TUB.wall, z1: TUB.z + TUB.d / 2 - TUB.wall,
+  },
+  table: {
+    y: TABLE.y, below: 0, walls: false, top: 0,
+    x0: TABLE.x - TABLE.w / 2, x1: TABLE.x + TABLE.w / 2, z0: TABLE.z - TABLE.d / 2, z1: TABLE.z + TABLE.d / 2,
+  },
+};
+
+// Things a jumping dog has to get over: a footprint and the height of its top edge.
+export const OBSTACLES = {
+  tub: { x0: TUB.x - TUB.w / 2 - 0.02, x1: TUB.x + TUB.w / 2 + 0.02, z0: TUB.z - TUB.d / 2 - 0.02, z1: TUB.z + TUB.d / 2 + 0.02, y: TUB.rim + 0.02 },
+  table: { x0: TABLE.x - TABLE.w / 2, x1: TABLE.x + TABLE.w / 2, z0: TABLE.z - TABLE.d / 2, z1: TABLE.z + TABLE.d / 2, y: TABLE.y },
+};
 
 export const STATIONS = {
   outside: new THREE.Vector3(1.3, 0, 4.2),
   doorway: new THREE.Vector3(1.3, 0, 2.2),
   lobby: new THREE.Vector3(0.75, 0, 1.25),
-  tubFront: new THREE.Vector3(-1.25, 0, -1.65),
+  tubFront: new THREE.Vector3(-1.45, 0, -1.5),
   tub: new THREE.Vector3(-1.25, TUB.floor, -2.62),
-  tableFront: new THREE.Vector3(0.5, 0, -1.55),
+  // Far enough back that the front paws can fold up and clear the table edge.
+  tableFront: new THREE.Vector3(0.62, 0, -1.3),
   table: new THREE.Vector3(1.25, TABLE.y, -2.15),
   owner: new THREE.Vector3(1.45, 0, 1.45),
   ownerOut: new THREE.Vector3(1.3, 0, 4.4),
@@ -701,7 +721,7 @@ export class Salon {
 
   _hoses() {
     const hoseMat = new THREE.MeshStandardMaterial({ color: '#9fd3e8', roughness: 0.35 });
-    this.sprayHose = new Rope(22, 3.6, 0.014, hoseMat);
+    this.sprayHose = new Rope(40, 3.8, 0.014, hoseMat);
     this.sprayHose.reset(this.faucetPos, this.faucetPos.clone().add(new THREE.Vector3(0.2, -0.5, 0.6)));
     this.group.add(this.sprayHose.mesh);
     // Dryer hose comes from a wall unit by the table.
@@ -711,11 +731,15 @@ export class Salon {
     this.group.add(grill);
     this.dryerOrigin = new THREE.Vector3(2.2, 1.4, ROOM.z0 + 0.2);
     const dryerHoseMat = new THREE.MeshStandardMaterial({ color: '#c9b6ff', roughness: 0.5 });
-    this.dryerHose = new Rope(20, 3.4, 0.024, dryerHoseMat);
+    this.dryerHose = new Rope(36, 3.8, 0.022, dryerHoseMat);
     this.dryerHose.reset(this.dryerOrigin, this.dryerOrigin.clone().add(new THREE.Vector3(-0.5, -0.6, 0.6)));
     this.group.add(this.dryerHose.mesh);
     this.sprayHose.mesh.visible = false;
     this.dryerHose.mesh.visible = false;
+    this.hoseCollide = this.hoseCollide.bind(this);
+    this.hoseOverRim = this.hoseOverRim.bind(this);
+    this.hoseSolids = this._hoseSolids();
+    this.hoseDog = null;
   }
 
   // ------------------------------------------------------------------
@@ -898,15 +922,76 @@ export class Salon {
       }
     }
 
-    // Hoses.
-    if (this.sprayHose.mesh.visible && ctx.sprayEnd) {
-      this.sprayHose.end.copy(ctx.sprayEnd);
-      this.sprayHose.update(dt, 0.005, wind);
+    // Hoses follow the fitting on the bottom of the tool in hand.
+    this.hoseDog = ctx.dog ?? null;
+    for (const [hose, end] of [[this.sprayHose, ctx.sprayEnd], [this.dryerHose, ctx.dryerEnd]]) {
+      if (!hose.mesh.visible || !end) continue;
+      hose.end.copy(end.at);
+      hose.endDir = end.dir;
+      hose.update(dt, this.hoseCollide, hose === this.sprayHose ? wind : null, this.hoseOverRim);
     }
-    if (this.dryerHose.mesh.visible && ctx.dryerEnd) {
-      this.dryerHose.end.copy(ctx.dryerEnd);
-      this.dryerHose.update(dt, 0.005, null);
+  }
+
+  // Solid boxes a hose rests on or drapes over: the tub (everything under the basin floor counts as
+  // solid, so hoses never sneak under it), its walls with the rolled rim, the grooming table top and
+  // the counter. [x0, y0, z0, x1, y1, z1]
+  _hoseSolids() {
+    const T = TUB, w = T.wall + 0.012, top = T.rim + 0.018;
+    const tx0 = T.x - T.w / 2, tx1 = T.x + T.w / 2, tz0 = T.z - T.d / 2, tz1 = T.z + T.d / 2;
+    const B = TABLE, C = COUNTER;
+    this.tubBox = { x0: tx0, x1: tx1, z0: tz0, z1: tz1, ix0: tx0 + w, ix1: tx1 - w, iz0: tz0 + w, iz1: tz1 - w, top };
+    return [
+      [tx0, 0, tz0, tx1, T.floor, tz1],
+      [tx0, 0, tz0, tx1, top, tz0 + w],
+      [tx0, 0, tz1 - w, tx1, top, tz1],
+      [tx0, 0, tz0, tx0 + w, top, tz1],
+      [tx1 - w, 0, tz0, tx1, top, tz1],
+      [B.x - B.w / 2, B.y - 0.05, B.z - B.d / 2, B.x + B.w / 2, B.y, B.z + B.d / 2],
+      [C.x0, 0, C.z0, C.x1, C.y, C.z1],
+    ];
+  }
+
+  // A hose segment from inside the basin to outside the tub must pass over the rim, not through
+  // the wall: lift its low end(s) onto the rim. `fa`/`fb` say whether an end is pinned.
+  hoseOverRim(a, b, r, fa, fb) {
+    const t = this.tubBox;
+    const inA = a.x > t.ix0 && a.x < t.ix1 && a.z > t.iz0 && a.z < t.iz1;
+    const inB = b.x > t.ix0 && b.x < t.ix1 && b.z > t.iz0 && b.z < t.iz1;
+    if (inA === inB) return;
+    const outA = a.x < t.x0 || a.x > t.x1 || a.z < t.z0 || a.z > t.z1;
+    const outB = b.x < t.x0 || b.x > t.x1 || b.z < t.z0 || b.z > t.z1;
+    if (!(outA || outB)) return;
+    const lip = t.top + r;
+    if (Math.min(a.y, b.y) >= lip) return;
+    if (!fa && a.y < lip) a.y = lip;
+    if (!fb && b.y < lip) b.y = lip;
+  }
+
+  // Keep a hose point out of the solids, the walls and the dog. True when it touched something.
+  hoseCollide(p, r) {
+    let hit = false;
+    for (const b of this.hoseSolids) {
+      const x0 = b[0] - r, y0 = b[1] - r, z0 = b[2] - r, x1 = b[3] + r, y1 = b[4] + r, z1 = b[5] + r;
+      if (p.x <= x0 || p.x >= x1 || p.y <= y0 || p.y >= y1 || p.z <= z0 || p.z >= z1) continue;
+      // Out through the nearest face, preferring the top so hoses settle onto things.
+      const dx0 = p.x - x0, dx1 = x1 - p.x, dy0 = p.y - y0, dy1 = y1 - p.y, dz0 = p.z - z0, dz1 = z1 - p.z;
+      const m = Math.min(dx0, dx1, dy0, dy1, dz0, dz1);
+      if (m === dy1) p.y = y1;
+      else if (m === dx0) p.x = x0;
+      else if (m === dx1) p.x = x1;
+      else if (m === dz0) p.z = z0;
+      else if (m === dz1) p.z = z1;
+      else p.y = y0;
+      hit = true;
     }
+    if (p.y < r) {
+      p.y = r;
+      hit = true;
+    }
+    p.x = Math.min(ROOM.x1 - r, Math.max(ROOM.x0 + r, p.x));
+    p.z = Math.min(ROOM.z1 - r, Math.max(ROOM.z0 + r, p.z));
+    if (this.hoseDog && this.hoseDog.colliders.pushOut(p, r + 0.012) >= 0) hit = true;
+    return hit;
   }
 
   _updateFairy(dt, wind) {

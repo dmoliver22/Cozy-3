@@ -3,7 +3,7 @@
 const KEY = 'suds-and-snips-v1';
 
 export function defaultSave() {
-  return { money: 0, day: 1, served: 0, appt: 0, upgrades: {}, photos: [], music: true, best: 0 };
+  return { money: 0, day: 1, served: 0, appt: 0, upgrades: {}, photos: [], music: true, best: 0, seen: [] };
 }
 
 export function loadSave() {
