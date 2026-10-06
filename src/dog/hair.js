@@ -188,7 +188,7 @@ float hairTilt = 0.0;
 // and thinning to a point, gathering toward the lock's tip (more when wet). Far away the hairs
 // blur together into a soft, translucent lock. Returns coverage; shade varies hair to hair.
 float lockHairs(float x, float u, float seed, float wet, out float shade, out float tilt) {
-  float m = 0.0;
+  float m = 0.0, cover = 0.0;
   shade = 1.0;
   tilt = 0.0;
   float aa = fwidth(x) * 0.75 + 1e-4;
@@ -200,14 +200,15 @@ float lockHairs(float x, float u, float seed, float wet, out float shade, out fl
     float h3 = fract(sin(seed * 73.156 + fi * 27.719) * 51832.1937);
     // Hairs come up out of the coat one by one rather than along a straight edge.
     float start = 0.16 * h3 * h3;
-    float end = 0.62 + 0.38 * h2;
+    float end = 0.7 + 0.3 * h2;
     if (u < start || u > end) continue;
     float base = ((fi + 0.5) / uStrands * 2.0 - 1.0) * 0.85 + (h1 - 0.5) * (1.4 / uStrands);
-    float gather = 1.0 - (0.45 + 0.22 * wet) * smoothstep(0.1, 1.0, u);
+    float gather = 1.0 - (0.25 + 0.42 * wet) * smoothstep(0.15, 1.0, u);
     float cx = base * gather + 0.1 * sin(u * (5.0 + 7.0 * h1) + h2 * 6.283) * (1.0 - 0.7 * wet);
-    // Each hair thins all the way to a point at its own end; the ones at the edges of the lock
-    // are finer, so a lock has a soft outline instead of a hard one.
-    float hw = (0.95 / uStrands) * pow(1.0 - u / end, 0.7) * smoothstep(start, start + 0.07, u) * (1.0 - 0.4 * abs(base));
+    // Each hair keeps its thickness most of the way and thins to a point toward its own end; the
+    // ones at the edges of the lock are finer, so a lock has a soft outline instead of a hard one.
+    float hw = (0.95 / uStrands) * sqrt(1.0 - smoothstep(0.3 * end, end, u)) * smoothstep(start, start + 0.07, u) * (1.0 - 0.4 * abs(base));
+    cover += hw;
     float mi = 1.0 - smoothstep(hw - aa, hw + aa, abs(x - cx));
     if (mi > m) {
       m = mi;
@@ -216,7 +217,10 @@ float lockHairs(float x, float u, float seed, float wet, out float shade, out fl
       tilt = (h2 - 0.5) * 0.5;
     }
   }
-  return m;
+  // Too fine to make out (far away, or on a small screen), a lock's hairs blur together: it
+  // then covers as much as its hairs do on average instead of turning see-through.
+  float avg = min(1.0, cover / 0.85) * (1.0 - smoothstep(0.8, 1.0, abs(x)));
+  return mix(m, max(m, avg), smoothstep(0.6, 1.6, aa * uStrands / 0.95));
 }
 `;
 
