@@ -3,33 +3,36 @@ import { QUALITY } from '../core/quality.js';
 import { mulberry32 } from '../core/math.js';
 
 // Hair rendering. The physics simulates ~1,000 guide strands per dog (see Fur); this draws a
-// whole coat of fine hairs around them, the way game hair systems do it: every guide grows a
-// clump of child hairs whose roots are scattered over the skin around it. Each child follows its
-// guide's simulated curve on the GPU (a Catmull-Rom spline through the guide's particles, read
-// from a float texture) and adds its own offset, waviness and length, so the whole coat moves with
-// the physics while only the guides are simulated.
+// whole coat around them, the way game hair systems do it: every guide grows a clump of locks
+// whose roots are scattered over the skin around it. Each lock follows its guide's simulated curve
+// on the GPU (a Catmull-Rom spline through the guide's particles, read from a float texture) and
+// adds its own offset, waviness and length, so the whole coat moves with the physics while only
+// the guides are simulated. A lock is a soft ribbon holding several fine hairs (drawn in the
+// fragment shader), which is what makes the coat read as fur rather than as strands.
 //
-// Child hairs fan apart when a coat is blow-dried, gather into points when it is wet, soapy or
-// muddy, and are shaded as hair: dark near the skin where light can't reach, a bright
+// Locks fan apart when a coat is blow-dried, gather into points when it is wet, soapy or muddy,
+// and are shaded as hair: dark near the skin and under the body where light can't reach, a bright
 // Kajiya-Kay sheen along the strands, and light glowing through backlit tips.
 
-// How the fine hairs look per coat type.
-//   width   hair thickness at the root (m)       segs   curve points along each hair
-//   frizz   wiggle amplitude (m) and frequency   fan    how far blow-dried hairs fan out
-//   lock    how tightly hairs gather into locks toward the tips (1 = not at all)
-//   under   share of soft undercoat hairs (double coats only)
-//   loft    how far hair tips lift off the layer below (m), so the coat has depth
+// How the hair looks per coat type. Each drawn strip is a lock: a ribbon `card` times wider than
+// a single hair, filled with `strands` fine hairs that wave, end at their own lengths, thin to a
+// point and gather toward the lock's tip.
+//   width   lock width at the root (m), before `card`   segs   curve points along each lock
+//   frizz   wiggle amplitude (m) and frequency          fan    how far blow-dried locks fan out
+//   lock    how tightly locks gather toward the tips (1 = not at all)
+//   under   share of soft undercoat (double coats only)
+//   loft    how far tips lift off the layer below (m), so the coat has depth
 const STYLES = {
-  fluffy: { width: 0.0021, segs: 8, frizz: 0.0045, freq: 13, fan: 1.0, lock: 0.7, loft: 0.012, under: 0 },
-  curly: { width: 0.0019, segs: 12, frizz: 0.0055, freq: 34, fan: 0.75, lock: 0.95, loft: 0.01, under: 0 },
-  silky: { width: 0.0018, segs: 9, frizz: 0.0012, freq: 7, fan: 0.3, lock: 0.42, loft: 0.01, under: 0 },
-  wiry: { width: 0.0022, segs: 6, frizz: 0.0028, freq: 40, fan: 0.5, lock: 0.85, loft: 0.006, under: 0 },
-  double: { width: 0.0019, segs: 6, frizz: 0.0018, freq: 9, fan: 0.6, lock: 0.9, loft: 0.008, under: 0.42 },
+  fluffy: { width: 0.0021, card: 2.6, strands: 6, segs: 8, frizz: 0.0045, freq: 13, fan: 1.0, lock: 0.7, loft: 0.012, under: 0 },
+  curly: { width: 0.0019, card: 2.2, strands: 5, segs: 12, frizz: 0.0055, freq: 34, fan: 0.75, lock: 0.95, loft: 0.01, under: 0 },
+  silky: { width: 0.0018, card: 3.0, strands: 7, segs: 9, frizz: 0.0012, freq: 7, fan: 0.3, lock: 0.42, loft: 0.01, under: 0 },
+  wiry: { width: 0.0022, card: 1.8, strands: 4, segs: 6, frizz: 0.0028, freq: 40, fan: 0.5, lock: 0.85, loft: 0.006, under: 0 },
+  double: { width: 0.0019, card: 2.4, strands: 6, segs: 6, frizz: 0.0018, freq: 9, fan: 0.6, lock: 0.9, loft: 0.008, under: 0.42 },
 };
 
 // Shared by every hair material: world size of one pixel per metre of distance, so hairs never
 // get thinner than about a pixel (they fade out instead, which keeps distant coats from shimmering).
-const shared = { uPx: { value: 0.0012 } };
+const shared = { uPx: { value: 0.0012 }, uThin: { value: 1 } };
 export function setHairPixelScale(camera, heightPx) {
   shared.uPx.value = 2 / (camera.projectionMatrix.elements[5] * Math.max(1, heightPx));
 }
@@ -39,6 +42,8 @@ export function setHairPixelScale(camera, heightPx) {
 let density = 1;
 export function setHairDensity(d) {
   density = Math.min(1, Math.max(0.35, d));
+  // Fewer locks are drawn wider, so the coat keeps covering the skin.
+  shared.uThin.value = Math.pow(density, -0.6);
 }
 export function hairDensity() {
   return density;
@@ -49,6 +54,7 @@ uniform highp sampler2D tPos;
 uniform highp sampler2D tAttr;
 uniform float uK;
 uniform float uWidth;
+uniform float uThin;
 uniform float uPx;
 uniform vec4 uStyle; // frizz, freq, fan, lock
 uniform float uLoft;
@@ -61,6 +67,8 @@ varying float vGloss;
 varying vec3 vHairTan;
 varying float vU;
 varying float vAlpha;
+varying float vAcross;
+varying float vSeed;
 vec3 hairPos;
 vec3 hairNrm;
 
@@ -102,7 +110,8 @@ void growHair() {
   float longK = smoothstep(0.02, 0.06, a3.x);
   float spread = 1.0 + uStyle.z * a2.x * uu * longK;
   spread *= mix(1.0, uStyle.w, smoothstep(0.25, 1.0, uu) * (1.0 - a2.x) * longK);
-  spread *= mix(1.0, 0.15, max(wet, a2.z) * smoothstep(0.05, 0.75, uu) * mix(0.2, 1.0, longK));
+  // Wet locks clump but still lie over each other, so they gather only part way.
+  spread *= mix(1.0, mix(0.15, 0.45, wet * (1.0 - a2.z)), max(wet, a2.z) * smoothstep(0.05, 0.75, uu) * mix(0.2, 1.0, longK));
   vec2 o = aOff * (a3.y * spread);
   vec3 p = c + T1 * o.x + T2 * o.y;
   // The clump's patch of skin curves away like the skin does, so its outer hairs don't float
@@ -113,6 +122,8 @@ void growHair() {
   // Short hair (faces, paws) stays sleek: loft and frizz scale with how long the hair is.
   float lenK = a2.w;
   p += N * (uLoft * lenK * fract(aRnd.y * 3.7 + aRnd.x * 1.3) * smoothstep(0.0, 0.8, uu) * (1.0 - 0.7 * wet));
+  // Each lock starts just under the skin and rises out of the fur.
+  p -= N * (0.0012 * (1.0 - smoothstep(0.0, 0.08, uu)));
 
   // Waves and frizz (undercoat is finely crimped), growing from nothing at the root.
   float ph = aRnd.z * 6.2832;
@@ -129,8 +140,10 @@ void growHair() {
   vec3 side = cross(tan, V);
   float sl = length(side);
   side = sl > 1e-6 ? side / sl : T1;
-  // Short hair is drawn finer so faces and paws read as a smooth pile, not blobs.
-  float w = uWidth * (0.75 + 0.5 * aRnd.y) * (1.0 - 0.8 * u) * (under ? 0.85 : 1.0) * clamp(sqrt(lenK), 0.55, 1.0);
+  // A lock is narrow where it leaves the skin and spreads out above it. Short hair is drawn finer
+  // so faces and paws read as a smooth pile, not blobs. When the game draws fewer locks to keep
+  // up, the rest widen so the coat stays just as full.
+  float w =uWidth * uThin * (0.75 + 0.5 * aRnd.y) * (1.0 - 0.4 * u) * mix(0.45, 1.0, smoothstep(0.0, 0.25, u)) * (under ? 0.85 : 1.0) * clamp(sqrt(lenK), 0.55, 1.0) * mix(1.0, 0.6, shortK);
   // Brushed-out undercoat is gone.
   if (under && aRnd.w > a2.y) w = 0.0;
   float wd = w;
@@ -139,17 +152,22 @@ void growHair() {
     wd = max(w, 0.7 * dist * uPx);
   #endif
   vAlpha = wd > 0.0 ? sqrt(w / wd) : 0.0;
+  // A lock seen end-on (pointing at the eye) would flip and show its edge: fade it out.
+  vAlpha *= smoothstep(0.06, 0.3, sl);
   hairPos = p + side * (position.y * 0.5 * wd);
   hairNrm = normalize(N * 0.7 + normalize(V - tan * dot(V, tan)) * 0.3);
 
-  // Colour: shadowed near the skin, a little different hair to hair, sun-bleached tips.
-  vec3 col = a0.rgb * (0.82 + 0.26 * fract(aRnd.y * 7.31 + aRnd.z * 3.17));
+  // Colour: shadowed near the skin, a little different hair to hair, sun-bleached tips, and
+  // darker under the body where little light reaches (so pale coats keep their shape).
+  vec3 col = a0.rgb * (0.82 + 0.26 * fract(aRnd.y * 7.31 + aRnd.z * 3.17)) * mix(0.68, 1.0, smoothstep(-0.7, 0.45, N.y));
   if (under) col = mix(col, vec3(0.9, 0.87, 0.82), 0.45);
   // Long coats are dark down at the skin; short fur lies on top and barely darkens at the root.
-  vHairCol = col * mix(mix(0.4, 0.84, shortK), 0.97, smoothstep(0.0, 0.7, u));
+  vHairCol = col * mix(mix(0.55, 0.86, shortK), 0.97, smoothstep(0.0, 0.7, u));
   vWet = wet;
   vGloss = a1.w;
   vU = u;
+  vAcross = position.y;
+  vSeed = aRnd.z * 61.7 + aRnd.y * 17.3;
   vHairTan = normalize(mat3(modelViewMatrix) * tan);
 }
 `;
@@ -161,6 +179,45 @@ varying float vGloss;
 varying vec3 vHairTan;
 varying float vU;
 varying float vAlpha;
+varying float vAcross;
+varying float vSeed;
+uniform float uStrands;
+float hairTilt = 0.0;
+
+// The fine hairs inside a lock: spread across it, each a little wavy, ending at its own length
+// and thinning to a point, gathering toward the lock's tip (more when wet). Far away the hairs
+// blur together into a soft, translucent lock. Returns coverage; shade varies hair to hair.
+float lockHairs(float x, float u, float seed, float wet, out float shade, out float tilt) {
+  float m = 0.0;
+  shade = 1.0;
+  tilt = 0.0;
+  float aa = fwidth(x) * 0.75 + 1e-4;
+  for (int i = 0; i < 8; i++) {
+    float fi = float(i);
+    if (fi >= uStrands) break;
+    float h1 = fract(sin(seed * 12.9898 + fi * 78.233) * 43758.5453);
+    float h2 = fract(sin(seed * 39.3468 + fi * 11.135) * 24634.6345);
+    float h3 = fract(sin(seed * 73.156 + fi * 27.719) * 51832.1937);
+    // Hairs come up out of the coat one by one rather than along a straight edge.
+    float start = 0.16 * h3 * h3;
+    float end = 0.62 + 0.38 * h2;
+    if (u < start || u > end) continue;
+    float base = ((fi + 0.5) / uStrands * 2.0 - 1.0) * 0.85 + (h1 - 0.5) * (1.4 / uStrands);
+    float gather = 1.0 - (0.45 + 0.22 * wet) * smoothstep(0.1, 1.0, u);
+    float cx = base * gather + 0.1 * sin(u * (5.0 + 7.0 * h1) + h2 * 6.283) * (1.0 - 0.7 * wet);
+    // Each hair thins all the way to a point at its own end; the ones at the edges of the lock
+    // are finer, so a lock has a soft outline instead of a hard one.
+    float hw = (0.95 / uStrands) * pow(1.0 - u / end, 0.7) * smoothstep(start, start + 0.07, u) * (1.0 - 0.4 * abs(base));
+    float mi = 1.0 - smoothstep(hw - aa, hw + aa, abs(x - cx));
+    if (mi > m) {
+      m = mi;
+      shade = 0.9 + 0.2 * h1;
+      // Every hair lies at its own slight angle, so its highlight sits somewhere else.
+      tilt = (h2 - 0.5) * 0.5;
+    }
+  }
+  return m;
+}
 `;
 
 const FRAG_SHADE = /* glsl */ `
@@ -177,13 +234,13 @@ const FRAG_SHADE = /* glsl */ `
     vec3 Lc = vec3(1.0);
   #endif
   vec3 H = normalize(L + V);
-  vec3 Ta = normalize(T - normal * 0.12);
-  vec3 Tb = normalize(T + normal * 0.2);
+  vec3 Ta = normalize(T + normal * (hairTilt - 0.12));
+  vec3 Tb = normalize(T + normal * (hairTilt + 0.2));
   float ta = dot(Ta, H), tb = dot(Tb, H);
   float sa = pow(sqrt(max(0.0, 1.0 - ta * ta)), 80.0);
   float sb = pow(sqrt(max(0.0, 1.0 - tb * tb)), 18.0);
   float lit = saturate(dot(normal, L) * 0.5 + 0.5);
-  float g = (vGloss + 0.12) * (1.0 + vWet * 1.4);
+  float g = (vGloss + 0.12) * (1.0 + vWet * 0.8);
   outgoingLight += (vec3(1.0, 0.97, 0.92) * sa * 0.16 + diffuseColor.rgb * sb * 0.22) * g * lit * Lc;
   float back = pow(saturate(dot(-V, L)), 3.0) * vU;
   outgoingLight += diffuseColor.rgb * back * 0.22 * Lc;
@@ -200,7 +257,17 @@ function hairMaterial(uniforms) {
       .replace('#include <begin_vertex>', 'vec3 transformed = hairPos;');
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>\n${FRAG_PARS}`)
-      .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb *= vHairCol;\ndiffuseColor.a *= vAlpha * (1.0 - 0.85 * smoothstep(0.72, 1.0, vU));')
+      .replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+        {
+          float shade;
+          float m = lockHairs(vAcross, vU, vSeed, vWet, shade, hairTilt);
+          if (m < 0.02) discard;
+          diffuseColor.rgb *= vHairCol * shade;
+          diffuseColor.a *= vAlpha * m * (1.0 - 0.5 * smoothstep(0.8, 1.0, vU));
+        }`
+      )
       .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 0.35, vWet);')
       .replace('#include <opaque_fragment>', `${FRAG_SHADE}\n#include <opaque_fragment>`);
   };
@@ -302,7 +369,9 @@ export class HairView {
       tPos: { value: this.tPos },
       tAttr: { value: this.tAttr },
       uK: { value: K },
-      uWidth: { value: style.width * Math.sqrt(30 / C) },
+      uWidth: { value: style.width * style.card * Math.sqrt(30 / C) },
+      uStrands: { value: style.strands },
+      uThin: shared.uThin,
       uStyle: { value: new THREE.Vector4(style.frizz, style.freq, style.fan, style.lock) },
       uLoft: { value: style.loft },
       uPx: shared.uPx,

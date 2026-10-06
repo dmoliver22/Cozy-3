@@ -45,7 +45,7 @@ function shellMaterial(base, shell, uniforms) {
         vBase = position;
         // Lying-flat coats lean far over and stand low; a soaked coat lies flatter still.
         float lean = length(aComb);
-        float up = mix(0.75, 0.3, lean) * (1.0 - 0.5 * uFlat);
+        float up = mix(0.75, 0.3, lean) * (1.0 - 0.3 * uFlat);
         transformed += normal * (uShell * aFurLen * up) + aComb * (pow(uShell, 1.4) * aFurLen * (1.0 + 0.2 * uFlat));
         vShellT = uShell;`
       );
@@ -68,6 +68,8 @@ function shellMaterial(base, shell, uniforms) {
             float ak = r > 0.0 ? 1.0 - smoothstep(r - fw, r + fw, d) : 0.0;
             if (ak > a) { a = ak; jit = h.y; }
           }
+          // Seen edge-on, the separate layers would show as slices: fade them out there.
+          a *= smoothstep(0.06, 0.3, abs(dot(normalize(vNormal), normalize(vViewPosition))));
           if (a < 0.02) discard;
           diffuseColor.a *= a;
           // Shadowed down in the pile, lighter toward the tips, a little different hair to hair.
@@ -75,7 +77,7 @@ function shellMaterial(base, shell, uniforms) {
         }`
       );
   };
-  mat.customProgramCacheKey = () => 'dog-shell-2';
+  mat.customProgramCacheKey = () => 'dog-shell-3';
   return mat;
 }
 

@@ -4,7 +4,7 @@ import { Spring, Pendulum } from '../core/springs.js';
 import { clamp, lerp, mulberry32, smoothstep } from '../core/math.js';
 import { Fur, REGION, OPEN_GROUND } from './fur.js';
 import { HairView } from './hair.js';
-import { DogBody } from './body.js';
+import { DogBody, torsoBulges } from './body.js';
 import { BREEDS, CUTS } from './breeds.js';
 import { QUALITY } from '../core/quality.js';
 
@@ -134,6 +134,11 @@ class Colliders {
     let t = ((x - ax) * abx + (y - ay) * aby + (z - az) * abz) / ab2;
     t = t < 0 ? 0 : t > 1 ? 1 : t;
     return Math.hypot(x - ax - abx * t, y - ay - aby * t, z - az - abz * t) / d[o + 7];
+  }
+  // Smallest radius of collider i.
+  size(i) {
+    const d = this.data, o = i * 16;
+    return d[o] === 0 ? Math.min(d[o + 13], d[o + 14], d[o + 15]) : d[o + 7];
   }
   // Approximate distance from a point to collider i's surface.
   distance(i, x, y, z) {
@@ -323,6 +328,8 @@ export class Dog {
   _buildColliders() {
     const C = (this.colliders = new Colliders());
     this.cTorso = C.add({ name: 'torso' });
+    // Chest and rump bulge past the barrel; the coat rests on them too.
+    this.bulges = torsoBulges(this.B).map((b) => ({ ...b, c: C.add({ name: 'bulge' }), at: new THREE.Vector3(...b.at) }));
     this.cHead = C.add({ name: 'head' });
     this.cSnout = C.add({ name: 'snout' });
     this.cNeck = C.add({ name: 'neck' });
@@ -668,6 +675,7 @@ export class Dog {
   _updateColliders() {
     const B = this.B, C = this.colliders;
     C.setEllipsoid(this.cTorso, this.torso.pos, this.torso.quat, B.torso, 0.008);
+    for (const b of this.bulges) C.setEllipsoid(b.c, this.torso.localToWorld(b.at, _a), this.torso.quat, b.r, 0.004);
     C.setEllipsoid(this.cHead, this.head.pos, this.head.quat, B.head.r, 0.006);
     this.head.localToWorld(_e.set(...B.snout.at), _a);
     C.setEllipsoid(this.cSnout, _a, this.head.quat, B.snout.r, 0.004);

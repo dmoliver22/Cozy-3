@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { STATIONS, TUB, TABLE, SUPPORTS } from '../world/salon.js';
 import { Dog } from '../dog/dog.js';
 import { CUTS, BREEDS, BOW_COLORS } from '../dog/breeds.js';
+import { setHairDensity, hairDensity } from '../dog/hair.js';
 
 // A small console/test hook: window.__suds. Handy for poking at the simulation and for smoke tests.
 export function installDebug(game) {
@@ -10,6 +11,11 @@ export function installDebug(game) {
     game,
     stats: () => game.dog?.refreshStats(),
     stage: () => game.stage,
+    // Share of the fine hairs drawn (the game also lowers it when frames are slow).
+    density(d) {
+      if (d != null) setHairDensity(d);
+      return hairDensity();
+    },
     fps: () => game._fps,
     // Look at a world point (or the dog's torso / head).
     lookAt(target = 'torso', offset = [0, 0, 0]) {

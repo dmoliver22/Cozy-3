@@ -111,7 +111,7 @@ export const BREEDS = {
     ears: { kind: 'floppy', at: [0.083, 0.045, -0.01], seg: 0.045, w: 0.05 },
     tail: { at: [0, 0.06, -0.27], segs: 2, seg: 0.04, dirs: [[0, 0.5, -1], [0, 0.3, -1]], stiff: 0.25, r: 0.035 },
     fur: {
-      len: 0.15, count: 1150, puff: 0.03, curl: 0.12, stiff: 0.13, stand: 0.36,
+      segs: 5, len: 0.15, count: 1150, puff: 0.03, curl: 0.12, stiff: 0.13, stand: 0.36,
       regions: { face: 0.4, headtop: 0.7, ears: 0.9, paws: 0.75, tail: 0.6, tailtip: 0.6 },
       fringe: true,
     },
@@ -147,7 +147,7 @@ export const BREEDS = {
     ears: { kind: 'floppy', at: [0.07, 0.03, -0.01], seg: 0.055, w: 0.045 },
     tail: { at: [0, 0.07, -0.2], segs: 3, seg: 0.045, dirs: [[0, 1, -0.5], [0, 1, -0.2], [0, 1, 0]], stiff: 0.3, r: 0.022 },
     fur: {
-      len: 0.085, count: 1000, puff: 0.025, curl: 0.62, stiff: 0.26, stand: 0.62,
+      segs: 4, len: 0.085, count: 1000, puff: 0.025, curl: 0.62, stiff: 0.26, stand: 0.62,
       regions: { face: 0.35, headtop: 1.25, ears: 1.2, tailtip: 1.4, paws: 0.9 },
     },
     dirt: 0.75,
@@ -209,7 +209,7 @@ export const BREEDS = {
     ears: { kind: 'upright', at: [0.04, 0.055, -0.01], seg: 0.025, w: 0.03 },
     tail: { at: [0, 0.06, -0.1], segs: 3, seg: 0.04, dirs: [[0, 1, -0.3], [0, 0.8, 0.5], [0, 0.2, 1]], stiff: 0.32, r: 0.02 },
     fur: {
-      len: 0.08, count: 950, puff: 0.02, curl: 0.18, stiff: 0.34, stand: 0.8,
+      segs: 4, len: 0.08, count: 950, puff: 0.02, curl: 0.18, stiff: 0.34, stand: 0.8,
       regions: { neck: 1.4, chest: 1.3, face: 0.35, ears: 0.5, paws: 0.5, legs: 0.7, tail: 1.2, tailtip: 1.2 },
     },
     dirt: 0.7,
@@ -241,7 +241,7 @@ export const BREEDS = {
     tail: { at: [0, 0.07, -0.28], segs: 4, seg: 0.07, dirs: [[0, 0.2, -1], [0, -0.1, -1], [0, -0.3, -1], [0, -0.35, -1]], stiff: 0.2, r: 0.025 },
     // Long, wavy, glossy top coat that lies flat, with feathering on legs, belly, chest and tail.
     fur: {
-      type: 'silky', segs: 4,
+      type: 'silky', segs: 5,
       len: 0.08, count: 1500, puff: 0.027, curl: 0.2, waveStep: 1.25, stiff: 0.13, stand: 0.16, gloss: 0.9, feather: 1.2,
       regions: { tail: 1.7, tailtip: 2.0, chest: 1.6, neck: 1.45, belly: 1.6, rear: 1.4, legs: 0.7, ears: 0.7, face: 0.13, headtop: 0.2, paws: 0.4 },
     },
@@ -277,7 +277,7 @@ export const BREEDS = {
     ears: { kind: 'floppy', at: [0.06, 0.03, -0.01], seg: 0.035, w: 0.035 },
     tail: { at: [0, 0.07, -0.13], segs: 3, seg: 0.04, dirs: [[0, 1, -0.4], [0, 0.9, 0.3], [0, 0.3, 1]], stiff: 0.3, r: 0.02 },
     fur: {
-      len: 0.07, count: 950, puff: 0.022, curl: 0.7, stiff: 0.3, stand: 0.72,
+      segs: 4, len: 0.07, count: 950, puff: 0.022, curl: 0.7, stiff: 0.3, stand: 0.72,
       regions: { headtop: 1.3, face: 0.6, ears: 1.2, paws: 0.8 },
     },
     dirt: 0.8,
@@ -307,7 +307,7 @@ export const BREEDS = {
     tail: { at: [0, 0.06, -0.12], segs: 3, seg: 0.04, dirs: [[0, 1, -0.3], [0, 0.8, 0.5], [0, 0.2, 1]], stiff: 0.3, r: 0.018 },
     // Floor-length straight silk, parted down the spine, with a topknot and moustache.
     fur: {
-      type: 'silky', segs: 5,
+      type: 'silky', segs: 6,
       len: 0.16, count: 1100, puff: 0.022, curl: 0.05, waveStep: 0.8, stiff: 0.11, stand: 0.05, gloss: 1, part: true, topknot: true,
       regions: { face: 0.7, headtop: 0.9, ears: 1.15, tail: 0.7, tailtip: 0.8, paws: 0.55, legs: 0.8, neck: 1.0, chest: 0.95, belly: 0.85 },
     },

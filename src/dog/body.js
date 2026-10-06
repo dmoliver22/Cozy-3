@@ -295,6 +295,16 @@ function noseGeometry() {
   return g;
 }
 
+// The deep chest and the rump, on top of the torso's barrel (torso-local centres and radii, and
+// how softly each blends in). The coat's colliders use them too, so hair rests on the real body.
+export function torsoBulges(B) {
+  const [rx, ry, rz] = B.torso;
+  return [
+    { at: [0, -0.12 * ry, 0.42 * rz], r: [0.94 * rx, 0.98 * ry, 0.56 * rz], k: 0.5 * ry },
+    { at: [0, 0.04 * ry, -0.6 * rz], r: [0.98 * rx, 0.9 * ry, 0.45 * rz], k: 0.4 * ry },
+  ];
+}
+
 export class DogBody {
   constructor(dog) {
     this.dog = dog;
@@ -338,8 +348,7 @@ export class DogBody {
     const bt = d.boneTorso;
     // Barrel, a deep chest dropping to the elbows, and a rounded rump.
     ell(bt, T.pos.clone(), [rx, ry, rz], 0.001);
-    ell(bt, tl(0, -0.12 * ry, 0.42 * rz), [0.94 * rx, 0.98 * ry, 0.56 * rz], 0.5 * ry);
-    ell(bt, tl(0, 0.04 * ry, -0.6 * rz), [0.98 * rx, 0.9 * ry, 0.45 * rz], 0.4 * ry);
+    for (const part of torsoBulges(B)) ell(bt, tl(...part.at), part.r, part.k);
     // Neck, thick where it meets the shoulders.
     cone(d.boneNeck, d.neckA, d.neckB, B.neckR * 1.3, B.neckR * 1.02, 0.5 * B.neckR);
     const up = T.dirToWorld(new THREE.Vector3(0, 1, 0), new THREE.Vector3());
@@ -759,7 +768,8 @@ export class DogBody {
       geo.setAttribute('aComb', new THREE.BufferAttribute(cmb, 3));
     };
     paint(this.mesh.geometry);
-    paint(this.earMesh.geometry);
+    // Ears are thin flaps under long locks: just a short velvet on them.
+    paint(this.earMesh.geometry, null, () => 0.35);
     const H = this.dog.head;
     const headToWorld = new THREE.Matrix4().compose(H.pos, H.quat, new THREE.Vector3(1, 1, 1));
     // Fur thins to nothing at the eyelids and the nose leather.
@@ -819,8 +829,14 @@ export class DogBody {
   // Wet skin darkens, muddy skin goes brown.
   setTint(wet, dirt, mud) {
     for (const m of [this.skinMat, this.earMat, this.headMat, this.lidMat]) m.color.setScalar(1 - wet * 0.25).lerp(mud, Math.min(0.8, dirt * 0.7));
+    // Wet fur has a sheen.
+    const rough = 0.92 - 0.22 * wet;
+    for (const m of [this.skinMat, this.earMat, this.headMat]) m.roughness = rough;
     if (!this.shells) return;
-    for (const l of this.shells) l.material.color.copy(this.skinMat.color);
+    for (const l of this.shells) {
+      l.material.color.copy(this.skinMat.color);
+      l.material.roughness = rough;
+    }
     // A soaked coat lies flat.
     this.shellU.uFlat.value = wet;
   }

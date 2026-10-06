@@ -135,11 +135,14 @@ export class Game {
     let pr = this.renderer.getPixelRatio();
     const hd = hairDensity();
     if (this._frameEma > 0.028) {
-      if (hd > 0.35) setHairDensity(hd * 0.85);
-      if (pr > 0.6) pr = Math.max(0.6, pr * 0.88);
+      // Struggling: drop resolution before thinning the coat, and never thin it below half.
+      if (pr > Math.max(0.75, max * 0.7)) pr = Math.max(0.6, pr * 0.88);
+      else if (hd > 0.5) setHairDensity(Math.max(0.5, hd * 0.85));
+      else if (pr > 0.6) pr = Math.max(0.6, pr * 0.9);
     } else if (this._frameEma < 0.018) {
+      // Headroom: fill the coat back in first, then sharpen.
       if (hd < 1) setHairDensity(hd * 1.1);
-      if (pr < max) pr = Math.min(max, pr * 1.1);
+      else if (pr < max) pr = Math.min(max, pr * 1.1);
     } else return;
     if (pr !== this.renderer.getPixelRatio()) {
       this.renderer.setPixelRatio(pr);

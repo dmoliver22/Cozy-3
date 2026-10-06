@@ -44,13 +44,16 @@ export class Fur {
     const rng = mulberry32(seed * 7919 + 13);
     this.rng = rng;
     const fb = breed.fur;
-    const K = (this.K = fb.segs ?? DEFAULT_K);
+    // Long coats get more particles per strand to curve and hang smoothly; phones get fewer.
+    const K = (this.K = Math.min(fb.segs ?? DEFAULT_K, QUALITY.segs));
     this.type = fb.type ?? 'fluffy';
     this.sDry = fb.stand;
     this.stiff = fb.stiff;
     this.curl = fb.curl;
     this.waveStep = fb.waveStep ?? 2.1;
     this.glossBase = fb.gloss ?? 0;
+    // How much a dry coat hangs under its own weight: silk falls in soft arcs, curls barely sag.
+    this.drape = fb.drape ?? { silky: 0.5, fluffy: 0.22, curly: 0.08, wiry: 0.05, double: 0.14 }[this.type] ?? 0.15;
     // Effects per touched particle are tuned for 3 segments; longer strands share them out.
     this.kf = DEFAULT_K / K;
 
@@ -138,6 +141,8 @@ export class Fur {
     this.shed0 = new Float32Array(S);
     this.disc = new Float32Array(S);
     this.curv = new Float32Array(S);
+    // Hair on a thin flap (the ears) has nothing solid under it: it stays on its own side.
+    this.flap = new Uint8Array(S);
     this.mat = new Int16Array(S).fill(-1);
     this.coll = new Int8Array(S * 4).fill(-1);
     // How far into each of those colliders the strand may go (1 = to its surface): never deeper
@@ -188,6 +193,7 @@ export class Fur {
       this.phase[s] = rng() * Math.PI * 2;
       this.disc[s] = d.disc;
       this.curv[s] = d.curv;
+      this.flap[s] = d.part === 'ear' ? 1 : 0;
       this.natLen[s] = d.len;
       this.len[s] = d.len;
       // Fewer strands on phones are drawn a little puffier so the coat stays full.
@@ -267,10 +273,17 @@ export class Fur {
         if (d < reach) cands.push([d, c]);
       }
       cands.sort((a, b) => a[0] - b[0]);
-      for (let j = 0; j < Math.min(4, cands.length); j++) {
+      const n = Math.min(4, cands.length);
+      const deps = cands.slice(0, n).map(([, c]) => colliders.depth(c, rx, ry, rz));
+      // Where the skin bulges out past every collider (a deep chest, a broad back), the hair
+      // would sink under the skin in the gap: keep it out at the root's own distance instead.
+      const nearest = deps.indexOf(Math.min(...deps));
+      let gap = nearest >= 0 && deps[nearest] > 1 && !this.flap[s] ? colliders.distance(cands[nearest][1], rx, ry, rz) : 0;
+      if (gap > 0.03) gap = 0;
+      for (let j = 0; j < n; j++) {
         const c = cands[j][1];
         this.coll[s * 4 + j] = c;
-        this.collA[s * 4 + j] = Math.max(0.5, Math.min(1, colliders.depth(c, rx, ry, rz)));
+        this.collA[s * 4 + j] = gap > 0 ? Math.min(deps[j], 1 + gap / colliders.size(c)) : Math.max(0.5, Math.min(1, deps[j]));
       }
     }
   }
@@ -437,6 +450,7 @@ export class Fur {
       rootPos[s * 3] = px0;
       rootPos[s * 3 + 1] = py0;
       rootPos[s * 3 + 2] = pz0;
+      const rx0 = px0, ry0 = py0, rz0 = pz0;
       const nlx = this.normal[s * 3], nly = this.normal[s * 3 + 1], nlz = this.normal[s * 3 + 2];
       this.rootN[s * 3] = Xx * nlx + Yx * nly + Zx * nlz;
       this.rootN[s * 3 + 1] = Xy * nlx + Yy * nly + Zy * nlz;
@@ -445,8 +459,8 @@ export class Fur {
       const seg = this.len[s] / K;
       const alpha = this.alpha[s];
       const damp = 0.986 - 0.05 * wet;
-      // Wet or limp hair sags; very short fur just lies flatter on the skin.
-      const droop = (wet * 0.6 + (1 - Math.min(1, this.fluff[s])) * 0.3) * seg * (this.len[s] < 0.025 ? 0.15 : 1);
+      // Hair hangs under its own weight, more when wet or limp; very short fur just lies flatter.
+      const droop = (this.drape * (1 - wet) + wet * 0.6 + (1 - Math.min(1, this.fluff[s])) * 0.3) * seg * (this.len[s] < 0.025 ? 0.15 : 1);
       const c0 = this.coll[s * 4], c1 = this.coll[s * 4 + 1], c2 = this.coll[s * 4 + 2], c3 = this.coll[s * 4 + 3];
       const collA = this.collA;
       for (let k = 0; k < K; k++) {
@@ -517,6 +531,17 @@ export class Fur {
                 pz = az + abz * t + qz * k2;
               }
             }
+          }
+        }
+        // Ear hair can't pass through the ear: keep it on the side of the flap it grows from.
+        if (this.flap[s]) {
+          const rN = this.rootN, s3 = s * 3;
+          const dn = (px - rx0) * rN[s3] + (py - ry0) * rN[s3 + 1] + (pz - rz0) * rN[s3 + 2];
+          if (dn < 0.0015) {
+            const push = 0.0015 - dn;
+            px += rN[s3] * push;
+            py += rN[s3 + 1] * push;
+            pz += rN[s3 + 2] * push;
           }
         }
         // Tub walls keep the coat inside the basin.
