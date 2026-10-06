@@ -53,7 +53,7 @@ export class Fur {
     this.waveStep = fb.waveStep ?? 2.1;
     this.glossBase = fb.gloss ?? 0;
     // How much a dry coat hangs under its own weight: silk falls in soft arcs, curls barely sag.
-    this.drape = fb.drape ?? { silky: 0.5, fluffy: 0.22, curly: 0.08, wiry: 0.05, double: 0.14 }[this.type] ?? 0.15;
+    this.drape = fb.drape ?? { silky: 0.5, fluffy: 0.38, curly: 0.2, wiry: 0.2, double: 0.3 }[this.type] ?? 0.3;
     // Effects per touched particle are tuned for 3 segments; longer strands share them out.
     this.kf = DEFAULT_K / K;
 
@@ -364,9 +364,10 @@ export class Fur {
       } else this.fluff[s] = ft;
       const f = this.fluff[s];
       const sm = smoothstep(0.42, 1, f);
-      let sOut = (sDry * sm + 0.55 * Math.max(0, f - 1) * (silky ? 0.3 : 1)) * this.standMul[s];
+      // Even a blow-dried coat lies back along the body: it gains volume, it doesn't stand on end.
+      let sOut = (sDry * sm + 0.22 * Math.max(0, f - 1) * (silky ? 0.3 : 1)) * this.standMul[s];
       if (m >= 0) sOut *= 1 - 0.6 * this.mats[m].health;
-      sOut = Math.min(0.92, sOut);
+      sOut = Math.min(0.65, sOut);
       this.alpha[s] = (stiff * (0.28 + 0.72 * sm) + 0.06 * Math.max(0, f - 1)) * this.stiffMul[s];
       // Short fur is naturally springier, and very short fur keeps the way it was groomed.
       if (this.len[s] < 0.04) this.alpha[s] = Math.max(this.alpha[s], this.len[s] < 0.025 ? 0.6 : 0.35);
@@ -377,7 +378,7 @@ export class Fur {
         this.puff[s] * (0.5 + 0.5 * sm) * (1 + 0.45 * Math.max(0, f - 1)) * (0.55 + 0.45 * Math.sqrt(lenF)) *
         (1 + this.lather[s] * 0.35) * (1 + shed * 0.22);
 
-      const mw = (this.messy[s] * 0.5 + shed * 0.25) * (1 - wet * 0.6);
+      const mw = (this.messy[s] * 0.38 + shed * 0.2) * (1 - wet * 0.6);
       const shortK = smoothstep(0.015, 0.045, this.natLen[s]);
       const seg = this.len[s] / K;
       const s3 = s * 3;

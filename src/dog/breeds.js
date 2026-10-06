@@ -112,7 +112,7 @@ export const BREEDS = {
     ears: { kind: 'floppy', at: [0.083, 0.045, -0.01], seg: 0.045, w: 0.05 },
     tail: { at: [0, 0.06, -0.27], segs: 2, seg: 0.04, dirs: [[0, 0.5, -1], [0, 0.3, -1]], stiff: 0.25, r: 0.035 },
     fur: {
-      segs: 5, len: 0.15, count: 1150, puff: 0.03, curl: 0.12, stiff: 0.13, stand: 0.36,
+      segs: 5, len: 0.15, count: 1150, puff: 0.03, curl: 0.12, stiff: 0.13, stand: 0.18,
       regions: { face: 0.4, headtop: 0.7, ears: 0.9, paws: 0.75, tail: 0.6, tailtip: 0.6 },
       fringe: true,
     },
@@ -149,7 +149,7 @@ export const BREEDS = {
     ears: { kind: 'floppy', at: [0.07, 0.03, -0.01], seg: 0.055, w: 0.045 },
     tail: { at: [0, 0.07, -0.2], segs: 3, seg: 0.045, dirs: [[0, 1, -0.5], [0, 1, -0.2], [0, 1, 0]], stiff: 0.3, r: 0.022 },
     fur: {
-      segs: 4, len: 0.085, count: 1000, puff: 0.025, curl: 0.62, stiff: 0.26, stand: 0.62,
+      segs: 4, len: 0.085, count: 1000, puff: 0.025, curl: 0.62, stiff: 0.26, stand: 0.38,
       regions: { face: 0.35, headtop: 1.25, ears: 1.2, tailtip: 1.4, paws: 0.9 },
     },
     dirt: 0.75,
@@ -179,7 +179,7 @@ export const BREEDS = {
     ears: { kind: 'upright', at: [0.058, 0.07, -0.01], seg: 0.045, w: 0.055 },
     tail: { at: [0, 0.05, -0.24], segs: 2, seg: 0.04, dirs: [[0, 0.2, -1], [0, 0, -1]], stiff: 0.3, r: 0.03 },
     fur: {
-      type: 'double', len: 0.045, count: 850, puff: 0.022, curl: 0.05, stiff: 0.32, stand: 0.3, shed: 0.55,
+      type: 'double', len: 0.045, count: 850, puff: 0.022, curl: 0.05, stiff: 0.32, stand: 0.16, shed: 0.55,
       regions: { rear: 1.8, chest: 1.5, neck: 1.4, face: 0.5, ears: 0.6, tail: 1.6, tailtip: 1.6, legs: 1.2 },
     },
     dirt: 0.85,
@@ -213,7 +213,7 @@ export const BREEDS = {
     ears: { kind: 'upright', at: [0.04, 0.055, -0.01], seg: 0.025, w: 0.03 },
     tail: { at: [0, 0.06, -0.1], segs: 3, seg: 0.04, dirs: [[0, 1, -0.3], [0, 0.8, 0.5], [0, 0.2, 1]], stiff: 0.32, r: 0.02 },
     fur: {
-      segs: 4, len: 0.08, count: 950, puff: 0.02, curl: 0.18, stiff: 0.34, stand: 0.8,
+      segs: 4, len: 0.08, count: 950, puff: 0.02, curl: 0.06, stiff: 0.34, stand: 0.38,
       regions: { neck: 1.4, chest: 1.3, face: 0.35, ears: 0.5, paws: 0.5, legs: 0.7, tail: 1.2, tailtip: 1.2 },
     },
     dirt: 0.7,
@@ -248,7 +248,7 @@ export const BREEDS = {
     // Long, wavy, glossy top coat that lies flat, with feathering on legs, belly, chest and tail.
     fur: {
       type: 'silky', segs: 5,
-      len: 0.08, count: 1500, puff: 0.027, curl: 0.2, waveStep: 1.25, stiff: 0.13, stand: 0.16, gloss: 0.9, feather: 1.2,
+      len: 0.08, count: 1500, puff: 0.027, curl: 0.2, waveStep: 1.25, stiff: 0.13, stand: 0.1, gloss: 0.9, feather: 1.2,
       regions: { tail: 1.7, tailtip: 2.0, chest: 1.4, neck: 1.25, belly: 1.2, rear: 1.35, legs: 0.7, ears: 0.7, face: 0.13, headtop: 0.2, paws: 0.4 },
     },
     dirt: 0.9,
@@ -284,7 +284,7 @@ export const BREEDS = {
     ears: { kind: 'floppy', at: [0.06, 0.03, -0.01], seg: 0.035, w: 0.035 },
     tail: { at: [0, 0.07, -0.13], segs: 3, seg: 0.04, dirs: [[0, 1, -0.4], [0, 0.9, 0.3], [0, 0.3, 1]], stiff: 0.3, r: 0.02 },
     fur: {
-      segs: 4, len: 0.07, count: 950, puff: 0.022, curl: 0.7, stiff: 0.3, stand: 0.72,
+      segs: 4, len: 0.07, count: 950, puff: 0.022, curl: 0.7, stiff: 0.3, stand: 0.4,
       regions: { headtop: 1.3, face: 0.6, ears: 1.2, paws: 0.8 },
     },
     dirt: 0.8,
@@ -316,7 +316,7 @@ export const BREEDS = {
     // Floor-length straight silk, parted down the spine, with a topknot and moustache.
     fur: {
       type: 'silky', segs: 6,
-      len: 0.16, count: 1100, puff: 0.022, curl: 0.05, waveStep: 0.8, stiff: 0.11, stand: 0.05, gloss: 1, part: true, topknot: true,
+      len: 0.16, count: 1100, puff: 0.022, curl: 0.05, waveStep: 0.8, stiff: 0.11, stand: 0.04, gloss: 1, part: true, topknot: true,
       regions: { face: 0.7, headtop: 0.9, ears: 1.15, tail: 0.7, tailtip: 0.8, paws: 0.55, legs: 0.8, neck: 1.0, chest: 0.95, belly: 0.85 },
     },
     dirt: 0.75,
@@ -355,7 +355,7 @@ export const BREEDS = {
     // A harsh, bristly jacket with soft furnishings: big beard, bushy brows, a leg and belly skirt.
     fur: {
       type: 'wiry', segs: 3,
-      len: 0.045, count: 1050, puff: 0.021, curl: 0.2, waveStep: 2.6, stiff: 0.34, stand: 0.34, brows: true, beard: true,
+      len: 0.045, count: 1050, puff: 0.021, curl: 0.2, waveStep: 2.6, stiff: 0.34, stand: 0.18, brows: true, beard: true,
       regions: { face: 1.45, brows: 1.0, legs: 1.75, paws: 1.6, belly: 1.85, chest: 1.3, back: 0.85, rear: 0.85, neck: 0.9, headtop: 0.38, ears: 0.55, tail: 0.8, tailtip: 0.8 },
     },
     dirt: 0.85,
@@ -390,7 +390,7 @@ export const BREEDS = {
     // A plush stand-up double coat stuffed with undercoat that comes out in clumps.
     fur: {
       type: 'double', segs: 3,
-      len: 0.06, count: 1500, puff: 0.019, curl: 0.06, stiff: 0.3, stand: 0.55, shed: 0.85,
+      len: 0.06, count: 1500, puff: 0.019, curl: 0.06, stiff: 0.3, stand: 0.26, shed: 0.85,
       regions: { neck: 1.5, chest: 1.3, rear: 1.45, tail: 2.0, tailtip: 2.0, face: 0.35, headtop: 0.55, ears: 0.5, legs: 0.7, paws: 0.5, belly: 1.1 },
     },
     dirt: 0.8,

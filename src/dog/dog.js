@@ -580,8 +580,8 @@ export class Dog {
         name: 'tail', bone: b, kind: 'seg', radius: () => B.tail.r,
         count: cnt(tailA),
         region: () => (j === this.boneTail.length - 1 ? REGION.tailtip : REGION.tail),
-        // Silky tails drape as a flag; other coats bottle-brush out.
-        groom: (P, Nn) => (silky ? [Nn[0] * 0.2, Nn[1] * 0.2, 1] : [Nn[0] * 0.45, Nn[1] * 0.45, 1]),
+        // Silky tails drape as a flag; other coats make a soft brush that sweeps toward the tip.
+        groom: (P, Nn) => (silky ? [Nn[0] * 0.2, Nn[1] * 0.2, 1] : [Nn[0] * 0.3, Nn[1] * 0.3, 1]),
         lenScale: tailFeather,
         color: coat('tail'),
       });

@@ -23,11 +23,11 @@ import { mulberry32 } from '../core/math.js';
 //   under   share of soft undercoat (double coats only)
 //   loft    how far tips lift off the layer below (m), so the coat has depth
 const STYLES = {
-  fluffy: { width: 0.0021, card: 2.6, strands: 6, segs: 8, frizz: 0.0045, freq: 13, fan: 1.0, lock: 0.7, loft: 0.012, under: 0 },
-  curly: { width: 0.0019, card: 2.2, strands: 5, segs: 12, frizz: 0.0055, freq: 34, fan: 0.75, lock: 0.95, loft: 0.01, under: 0 },
-  silky: { width: 0.0018, card: 3.0, strands: 7, segs: 9, frizz: 0.0012, freq: 7, fan: 0.3, lock: 0.42, loft: 0.01, under: 0 },
-  wiry: { width: 0.0022, card: 1.8, strands: 4, segs: 6, frizz: 0.0028, freq: 40, fan: 0.5, lock: 0.85, loft: 0.006, under: 0 },
-  double: { width: 0.0019, card: 2.4, strands: 6, segs: 6, frizz: 0.0018, freq: 9, fan: 0.6, lock: 0.9, loft: 0.008, under: 0.42 },
+  fluffy: { width: 0.0021, card: 2.6, strands: 6, segs: 8, frizz: 0.0022, freq: 13, fan: 0.45, lock: 0.8, loft: 0.009, under: 0 },
+  curly: { width: 0.0019, card: 2.2, strands: 5, segs: 12, frizz: 0.0045, freq: 34, fan: 0.35, lock: 0.95, loft: 0.008, under: 0 },
+  silky: { width: 0.0018, card: 3.0, strands: 7, segs: 9, frizz: 0.0012, freq: 7, fan: 0.2, lock: 0.42, loft: 0.01, under: 0 },
+  wiry: { width: 0.0022, card: 1.8, strands: 4, segs: 6, frizz: 0.002, freq: 40, fan: 0.25, lock: 0.85, loft: 0.006, under: 0 },
+  double: { width: 0.0019, card: 2.4, strands: 6, segs: 6, frizz: 0.0018, freq: 9, fan: 0.3, lock: 0.9, loft: 0.006, under: 0.42 },
 };
 
 // Shared by every hair material: world size of one pixel per metre of distance, so hairs never
