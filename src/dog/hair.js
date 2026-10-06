@@ -121,7 +121,8 @@ void growHair() {
   // Hairs don't all lie in one layer: each lifts a little toward its tip, so the coat has depth.
   // Short hair (faces, paws) stays sleek: loft and frizz scale with how long the hair is.
   float lenK = a2.w;
-  p += N * (uLoft * lenK * fract(aRnd.y * 3.7 + aRnd.x * 1.3) * smoothstep(0.0, 0.8, uu) * (1.0 - 0.7 * wet));
+  float lift = fract(aRnd.y * 3.7 + aRnd.x * 1.3);
+  p += N * (uLoft * lenK * lift * smoothstep(0.0, 0.8, uu) * (1.0 - 0.7 * wet));
   // Each lock starts just under the skin and rises out of the fur.
   p -= N * (0.0012 * (1.0 - smoothstep(0.0, 0.08, uu)));
 
@@ -162,9 +163,16 @@ void growHair() {
   vec3 col = a0.rgb * (0.82 + 0.26 * fract(aRnd.y * 7.31 + aRnd.z * 3.17)) * mix(0.68, 1.0, smoothstep(-0.7, 0.45, N.y));
   if (under) col = mix(col, vec3(0.9, 0.87, 0.82), 0.45);
   // Long coats are dark down at the skin; short fur lies on top and barely darkens at the root.
+  // Locks lying low, under the others, get less light than the ones on top, and whole clumps
+  // (the locks around one guide) differ a little: the coat shows dark depths between brighter
+  // tufts instead of one evenly lit mass. Top locks carry the shine.
+  float depthK = lenK * smoothstep(0.05, 0.5, u);
+  float clump = fract(sin(aGuide * 12.9898) * 43758.5453);
+  col *= mix(1.0, mix(0.6, 1.08, lift) * (0.9 + 0.2 * clump), depthK);
   vHairCol = col * mix(mix(0.55, 0.86, shortK), 0.97, smoothstep(0.0, 0.7, u));
   vWet = wet;
-  vGloss = a1.w;
+  // Short fur (faces, paws) has a soft sheen rather than glints off every tiny lock.
+  vGloss = a1.w * mix(1.0, mix(0.45, 1.25, lift), depthK) * mix(0.35, 1.0, longK);
   vU = u;
   vAcross = position.y;
   vSeed = aRnd.z * 61.7 + aRnd.y * 17.3;
@@ -241,11 +249,11 @@ const FRAG_SHADE = /* glsl */ `
   vec3 Ta = normalize(T + normal * (hairTilt - 0.12));
   vec3 Tb = normalize(T + normal * (hairTilt + 0.2));
   float ta = dot(Ta, H), tb = dot(Tb, H);
-  float sa = pow(sqrt(max(0.0, 1.0 - ta * ta)), 80.0);
+  float sa = pow(sqrt(max(0.0, 1.0 - ta * ta)), 64.0);
   float sb = pow(sqrt(max(0.0, 1.0 - tb * tb)), 18.0);
   float lit = saturate(dot(normal, L) * 0.5 + 0.5);
   float g = (vGloss + 0.12) * (1.0 + vWet * 0.8);
-  outgoingLight += (vec3(1.0, 0.97, 0.92) * sa * 0.16 + diffuseColor.rgb * sb * 0.22) * g * lit * Lc;
+  outgoingLight += (vec3(1.0, 0.97, 0.92) * sa * 0.22 + diffuseColor.rgb * sb * 0.26) * g * lit * Lc;
   float back = pow(saturate(dot(-V, L)), 3.0) * vU;
   outgoingLight += diffuseColor.rgb * back * 0.22 * Lc;
 }
@@ -268,8 +276,9 @@ function hairMaterial(uniforms) {
           float shade;
           float m = lockHairs(vAcross, vU, vSeed, vWet, shade, hairTilt);
           if (m < 0.02) discard;
-          diffuseColor.rgb *= vHairCol * shade;
-          diffuseColor.a *= vAlpha * m * (1.0 - 0.5 * smoothstep(0.8, 1.0, vU));
+          // A lock is a rounded bundle: a little darker along its edges.
+          diffuseColor.rgb *= vHairCol * shade * (0.8 + 0.2 * (1.0 - vAcross * vAcross));
+          diffuseColor.a *= vAlpha * m;
         }`
       )
       .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 0.35, vWet);')

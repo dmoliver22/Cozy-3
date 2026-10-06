@@ -477,8 +477,10 @@ export class Dog {
         // Keep the clump's fine hairs from rooting on the eye.
         d.disc = Math.min(d.disc, Math.max(0.12, (c.eye + 0.1 * re) / disc0));
       }
-      // Fur shortens toward the nose leather, so the nose stays clear.
+      // Fur shortens toward the nose leather and grows away from it, so the nose stays clear.
       d.len *= 0.35 + 0.65 * smoothstep(0, 2 * body.noseR, c.nose);
+      const wn = 2 * (1 - smoothstep(0, 3 * body.noseR, c.nose));
+      d.G = [d.G[0] + c.noseAway[0] * wn, d.G[1] + c.noseAway[1] * wn, d.G[2] + c.noseAway[2] * wn];
       d.disc = Math.min(d.disc, Math.max(0.12, (c.nose + 0.003) / disc0));
       return true;
     };
@@ -522,7 +524,7 @@ export class Dog {
       exclude: (P) => {
         const z = (P[2] - sn.at[2]) / sn.r[2];
         const y = (P[1] - sn.at[1]) / sn.r[1];
-        if (y < -0.55 && z > 0.2 && !F.beard && !F.topknot) return true; // the mouth (beards grow over it)
+        if (y < -0.85 && z > 0.3 && !F.beard && !F.topknot) return true; // under the chin (beards grow over it)
         // inside head
         return (P[0] / hx) ** 2 + (P[1] / hy) ** 2 + (P[2] / hz) ** 2 < 0.85;
       },
@@ -589,6 +591,8 @@ export class Dog {
         parts.push({
           name: 'ear', bone: b, kind: 'seg', radius: () => B.ears.w * 0.45,
           count: cnt(earA),
+          // Each clump's locks stay close around it, on the flap.
+          disc: 0.55,
           region: () => REGION.ears,
           groom: (P, Nn) => [Nn[0] * 0.2, Nn[1] * 0.2, 1],
           // Upright ears carry short, close fur; floppy ears may be feathered.

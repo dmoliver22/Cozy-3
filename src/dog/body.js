@@ -6,9 +6,10 @@ import { hairDensity } from './hair.js';
 // rump, shoulders and thighs, neck, tapering legs, paws and tail are signed-distance shapes blended
 // into each other, meshed once when the dog is made (surface nets) and skinned to the physics
 // skeleton's bones, so the whole body bends with the simulation. The head is modelled the same
-// way at a finer grain (skull, brow, cheeks, a tapering muzzle with a stop, jaw and eye sockets)
-// and carries the face: recessed glossy eyes with dark rims, a proper dog nose with nostrils, and
-// a lip line. Ears are thin leaf-shaped flaps skinned to their own chain bones.
+// way at a finer grain (skull, brow, cheeks, a muzzle running on from the stop with soft upper lips
+// over a narrower jaw, shaped per breed, and sockets for the eyes) and carries the face: dark,
+// wet eyes set in those sockets with dark rims, a proper dog nose with nostrils, and a lip line.
+// Ears are thin leaf-shaped flaps skinned to their own chain bones.
 //
 // The coat's guide strands are moved onto this skin (relocate) and the skin takes the coat's
 // colours (colorize), so gaps between hairs look like dense underfur.
@@ -171,20 +172,21 @@ function frameMatrix(F, b, out) {
 }
 
 // An eyeball whose colours are painted on as rings around its front: a big dark pupil, a
-// brown (or blue) iris with fine radial fibres and a dark ring at its edge, then the white.
+// brown (or blue) iris with fine radial fibres and a dark ring at its edge, then the white, which
+// in a dog is barely ever seen and is a dusky brown where it is.
 function eyeballGeometry(re, iris) {
   const g = new THREE.SphereGeometry(re, 48, 32);
   g.rotateX(Math.PI / 2); // poles front and back, so the rings are centred on the pupil
   const p = g.attributes.position, col = new Float32Array(p.count * 3);
-  const c = new THREE.Color(), dark = new THREE.Color(0x070505), white = new THREE.Color(0xe9e1d6);
+  const c = new THREE.Color(), dark = new THREE.Color(0x070505), white = new THREE.Color(0x8a786a);
   const irisDeep = iris.clone().multiplyScalar(0.55);
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
     const a = Math.acos(Math.max(-1, Math.min(1, z / re))); // angle from the front
     const fib = 0.85 + 0.3 * Math.abs(Math.sin(Math.atan2(y, x) * 23)) * Math.abs(Math.sin(Math.atan2(y, x) * 7 + 1));
-    if (a < 0.3) c.copy(dark);
-    else if (a < 0.78) c.copy(irisDeep).lerp(iris, smooth01((a - 0.3) / 0.32)).multiplyScalar(fib);
-    else if (a < 0.88) c.copy(irisDeep).multiplyScalar(0.45);
+    if (a < 0.32) c.copy(dark);
+    else if (a < 0.86) c.copy(iris).lerp(irisDeep, smooth01((a - 0.45) / 0.41)).multiplyScalar(fib);
+    else if (a < 0.96) c.copy(irisDeep).multiplyScalar(0.4);
     else c.copy(white);
     col.set([c.r, c.g, c.b], i * 3);
   }
@@ -200,7 +202,7 @@ const v0 = new THREE.Vector3();
 // colours darken the margin; the material carries the face's colour.
 // shape: [half-width, upper lid height, lower lid height] in eyeball radii; tilt raises the
 // outer corner.
-function lidGeometry(re, upper, side, shape = [0.85, 0.58, 0.46], tilt = 0.09) {
+function lidGeometry(re, upper, side, shape = [0.84, 0.5, 0.4], tilt = 0.09) {
   const U = 22, V = 7, W = shape[0], H = upper > 0 ? shape[1] : shape[2];
   const r = re * 1.045;
   const pos = [], col = [], idx = [];
@@ -371,34 +373,45 @@ export class DogBody {
     this.bodySdf = unionOf(P);
   }
 
-  // Head-local shapes: skull, brow, cheeks, a muzzle tapering to the nose, jaw; then eye sockets.
+  // Head-local shapes: skull, brow and cheeks; a muzzle that runs on from the stop and tapers to
+  // the nose, soft upper lips hanging over a narrower lower jaw; then sockets for the eyes.
   _headShapes() {
     const B = this.dog.B;
     const [hx, hy, hz] = B.head.r;
     const [sx, sy, sz] = B.snout.r;
     const [cx, cy, cz] = B.snout.at;
+    // flews: how loose and deep the upper lips hang (retrievers) or how tight (huskies, spitz);
+    // taper: how much the muzzle narrows to the nose (foxy faces a lot, blocky ones hardly).
+    const flews = B.face?.flews ?? 0.3, taper = B.face?.taper ?? 0.2;
     const P = [];
     const V = (x, y, z) => new THREE.Vector3(x, y, z);
-    P.push({ k: 0.001, ...bound(V(0, 0, 0), Math.max(hx, hy, hz)), d: (x, y, z) => sdEllipsoid(x, y, z, hx, hy, hz) });
-    P.push({ k: 0.4 * hy, ...bound(V(0, 0.2 * hy, 0.36 * hz), 0.8 * Math.max(hx, hy, hz)), d: (x, y, z) => sdEllipsoid(x, y - 0.2 * hy, z - 0.36 * hz, 0.8 * hx, 0.62 * hy, 0.62 * hz) });
-    for (const s of [1, -1]) P.push({ k: 0.35 * hx, ...bound(V(s * 0.5 * hx, -0.3 * hy, 0.3 * hz), 0.52 * Math.max(hx, hy, hz)), d: (x, y, z) => sdEllipsoid(x - s * 0.5 * hx, y + 0.3 * hy, z - 0.3 * hz, 0.5 * hx, 0.48 * hy, 0.52 * hz) });
-    // Muzzle: a rounded box, narrowing and lowering a little toward the nose.
-    const bx = sx * 0.92, by = sy * 0.86, bz = sz * 1.02, rr = 0.62 * Math.min(sx, sy);
+    const ell = (c, r, k) => P.push({ k, ...bound(c, Math.max(...r)), d: (x, y, z) => sdEllipsoid(x - c.x, y - c.y, z - c.z, r[0], r[1], r[2]) });
+    ell(V(0, 0, 0), [hx, hy, hz], 0.001);
+    ell(V(0, 0.2 * hy, 0.36 * hz), [0.8 * hx, 0.62 * hy, 0.62 * hz], 0.4 * hy);
+    for (const s of [1, -1]) ell(V(s * 0.5 * hx, -0.3 * hy, 0.3 * hz), [0.5 * hx, 0.48 * hy, 0.52 * hz], 0.35 * hx);
+    // Muzzle: a rounded box, flat on top and narrower there than down at the lips, tapering to the
+    // nose with its top running straight on from the stop.
+    const bx = sx * 0.95, by = sy * 0.88, bz = sz * 1.02, rr = 0.4 * Math.min(sx, sy);
     P.push({
-      k: 0.6 * Math.min(sx, sy),
+      k: 0.5 * Math.min(sx, sy),
       ...bound(V(cx, cy, cz), Math.hypot(bx, by, bz) * 1.05),
       d: (x, y, z) => {
-        const lx = x - cx, ly = y - cy - 0.06 * sy, lz = z - cz;
+        const lx = x - cx, ly = y - cy - 0.04 * sy, lz = z - cz;
         const t = clamp(lz / bz, -1, 1) * 0.5 + 0.5;
-        const qx = Math.abs(lx) - bx * (1 - 0.2 * t) + rr, qy = Math.abs(ly + 0.08 * sy * t) - by * (1 - 0.12 * t) + rr, qz = Math.abs(lz) - bz + rr;
+        const v = clamp((ly + by) / (2 * by), 0, 1);
+        const wx = bx * (1 - taper * t) * (1 - 0.18 * v * v);
+        const qx = Math.abs(lx) - wx + rr, qy = Math.abs(ly + 0.06 * sy * t) - by * (1 - 0.12 * t) + rr, qz = Math.abs(lz) - bz + rr;
         return Math.hypot(Math.max(qx, 0), Math.max(qy, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qy, qz), 0) - rr;
       },
     });
-    P.push({ k: 0.3 * sy, ...bound(V(cx, cy, cz), Math.max(sx, sy, sz)), d: (x, y, z) => sdEllipsoid(x - cx, y - cy, z - cz, sx, sy, sz) });
-    P.push({ k: 0.45 * sy, ...bound(V(0, cy - 0.55 * sy, cz - 0.18 * sz), 0.88 * Math.max(sx, sy, sz)), d: (x, y, z) => sdEllipsoid(x, y - (cy - 0.55 * sy), z - (cz - 0.18 * sz), 0.8 * sx, 0.5 * sy, 0.88 * sz) });
+    // Upper lips: soft lobes down the sides of the muzzle, hanging over the lower jaw.
+    for (const s of [1, -1]) ell(V(cx + s * 0.6 * sx * (1 - 0.5 * taper), cy - (0.55 + 0.2 * flews) * sy, cz + 0.22 * sz), [0.42 * sx, (0.32 + 0.22 * flews) * sy, 0.78 * sz], 0.3 * sy);
+    // Lower jaw: narrower than the muzzle and tucked in behind the lips.
+    ell(V(cx, cy - 0.72 * sy, cz - 0.12 * sz), [0.66 * sx * (1 - 0.4 * taper), 0.34 * sy, 0.84 * sz], 0.3 * sy);
     const base = unionOf(P);
+    this.lipShape = { flews };
 
-    // Eyes: life-size eyeballs set deep in the head, so only a shallow cap shows; lids (built in
+    // Eyes: life-size eyeballs set deep in sockets, so only a shallow cap shows; lids (built in
     // _buildFace) close over its top and bottom into an almond.
     const E = B.eyes;
     const re = E.r * (E.size ?? 0.75);
@@ -406,13 +419,28 @@ export class DogBody {
       const p = project(base, [E.at[0] * s, E.at[1], E.at[2]], [0, 0, 0]);
       const n = gradient(base, p[0], p[1], p[2], [0, 0, 0]);
       const dir = new THREE.Vector3(n[0] * 0.45 + s * 0.08, n[1] * 0.45 + 0.04, n[2] * 0.45 + 0.55).normalize();
-      const c = new THREE.Vector3(p[0], p[1], p[2]).addScaledVector(dir, -re * 0.58);
+      const c = new THREE.Vector3(p[0], p[1], p[2]).addScaledVector(dir, -re * 0.7);
       // Lid frame: X across the eye toward its outer corner, Y up the face, Z out of the eye.
       const Y = new THREE.Vector3(0, 1, 0).addScaledVector(dir, -dir.y).normalize();
       const X = new THREE.Vector3().crossVectors(Y, dir).multiplyScalar(s).normalize();
       return { c, dir, X, Y, re, side: s };
     });
-    this.headSdf = base;
+    // Each eye sits in a socket a little wider than it is tall, with a soft rim, so the face
+    // wraps around the eye instead of the eye sitting on the face.
+    const sockets = this.eyeSpots.map((e) => {
+      const ax = [e.X.x, e.X.y, e.X.z], ay = [e.Y.x, e.Y.y, e.Y.z], az = [e.dir.x, e.dir.y, e.dir.z];
+      const { x: ox, y: oy, z: oz } = e.c;
+      return (x, y, z) => {
+        const dx = x - ox, dy = y - oy, dz = z - oz;
+        return sdEllipsoid(dx * ax[0] + dy * ax[1] + dz * ax[2], dx * ay[0] + dy * ay[1] + dz * ay[2], dx * az[0] + dy * az[1] + dz * az[2], re * 1.2, re * 0.98, re * 1.04);
+      };
+    });
+    const k = re * 0.3;
+    this.headSdf = (x, y, z) => {
+      let d = base(x, y, z);
+      for (const sk of sockets) d = smax(d, -sk(x, y, z), k);
+      return d;
+    };
     this.headBase = base;
   }
 
@@ -447,7 +475,29 @@ export class DogBody {
         const L = localizer(c, new THREE.Quaternion().setFromRotationMatrix(m)), o = [0, 0, 0];
         return (x, y, zz) => (L(x, y, zz, o), sdEllipsoid(o[0], o[1], o[2], half * 1.05, 0.006, l * 0.62));
       });
-      return { side, bones, n, across, width, point, cup: floppy ? 0.25 : 0.4, sdf: (x, y, z) => Math.min(segs[0](x, y, z), segs[1](x, y, z)) };
+      // Pull a point back inside the flap's outline (hair roots must not hang off its edges).
+      const L = (len1 + len2) * 1.08, q = new THREE.Vector3(), c = new THREE.Vector3();
+      const clampToFlap = (w) => {
+        q.set(w[0], w[1], w[2]);
+        let best = Infinity, su = 0;
+        for (const [a, b, s0, l] of [[p0, p1, 0, len1], [p1, p2, len1, len2]]) {
+          const t = clamp(c.subVectors(q, a).dot(b.clone().sub(a)) / (l * l), 0, 1);
+          const d = c.copy(a).lerp(b, t).distanceTo(q);
+          if (d < best) {
+            best = d;
+            su = (s0 + t * l) / L;
+          }
+        }
+        const u = clamp(su, 0, 0.98);
+        point(u, c);
+        const off = q.clone().sub(c);
+        const a = clamp(off.dot(across), -width(u) * 0.85, width(u) * 0.85);
+        c.addScaledVector(across, a).addScaledVector(n, off.dot(n));
+        w[0] = c.x;
+        w[1] = c.y;
+        w[2] = c.z;
+      };
+      return { side, bones, n, across, width, point, clampToFlap, cup: floppy ? 0.25 : 0.4, sdf: (x, y, z) => Math.min(segs[0](x, y, z), segs[1](x, y, z)) };
     });
   }
 
@@ -588,17 +638,19 @@ export class DogBody {
     group.add(this.headMesh);
     // Eyes: a glossy eyeball set deep in the head, with upper and lower lids closing over it into
     // an almond with a dark margin. The upper lid swings down to blink.
-    const eyeMat = new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.35, clearcoat: 1, clearcoatRoughness: 0.04 });
-    const glint = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 });
+    // A wet, dark eye: the cornea mirrors the room only faintly, so the eye stays dark instead of
+    // turning into a silvery bead.
+    const eyeMat = new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.5, clearcoat: 0.7, clearcoatRoughness: 0.06, envMapIntensity: 0.35 });
+    const glint = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7 });
     this.lidMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.75, side: THREE.DoubleSide });
-    const iris = new THREE.Color(B.eyes.color ?? '#5a3416');
+    const iris = new THREE.Color(B.eyes.color ?? '#3f2512');
     this.eyes = this.eyeSpots.map((e) => {
       const g = new THREE.Group();
       g.position.copy(e.c);
       const Xr = new THREE.Vector3().crossVectors(e.Y, e.dir);
       g.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(Xr, e.Y, e.dir));
       g.add(new THREE.Mesh(eyeballGeometry(e.re, iris), eyeMat));
-      const spark = new THREE.Mesh(new THREE.SphereGeometry(e.re * 0.1, 10, 8), glint);
+      const spark = new THREE.Mesh(new THREE.SphereGeometry(e.re * 0.075, 10, 8), glint);
       // Both catchlights on the same side, as from one window.
       spark.position.set(e.re * 0.22, e.re * 0.22, e.re * 0.97);
       g.add(spark);
@@ -634,29 +686,31 @@ export class DogBody {
     group.add(nose);
     this.nosePos = nose.position.clone();
 
-    // Lips: a dark line from under the nose back to the corners of the mouth.
-    const lipMat = new THREE.MeshStandardMaterial({ color: 0x2a1e1c, roughness: 0.6 });
+    // Mouth: a dark lip line along the bottom edge of the upper lips, back to the corners of the
+    // mouth. Under the nose it runs along the underside, where it is seen from below rather than
+    // drawn across the front of the face.
+    const lipMat = new THREE.MeshStandardMaterial({ color: 0x33241f, roughness: 0.6 });
+    const fl = this.lipShape.flews;
     for (const s of [1, -1]) {
       const pts = [
-        [0, cy - sy * 0.66, cz + sz * 0.92],
-        [s * sx * 0.55, cy - sy * 0.6, cz + sz * 0.62],
-        [s * sx * 0.88, cy - sy * 0.47, cz + sz * 0.05],
-        [s * sx * 0.86, cy - sy * 0.3, cz - sz * 0.5],
-        [s * sx * 0.8, cy - sy * 0.14, cz - sz * 0.74],
+        [0, cy - sy * 1.15, cz + sz * 0.82],
+        [s * sx * 0.34, cy - sy * (1.15 + 0.25 * fl), cz + sz * 0.72],
+        [s * sx * 0.6, cy - sy * (1.05 + 0.4 * fl), cz + sz * 0.4],
+        [s * sx * 0.7, cy - sy * (0.88 + 0.3 * fl), cz - sz * 0.05],
+        [s * sx * 0.72, cy - sy * 0.64, cz - sz * 0.42],
       ].map((q) => {
         const g = [0, 0, 0];
         project(f, q, g);
-        return new THREE.Vector3(q[0] + g[0] * 0.0008, q[1] + g[1] * 0.0008, q[2] + g[2] * 0.0008);
+        return new THREE.Vector3(q[0] + g[0] * 0.0005, q[1] + g[1] * 0.0005, q[2] + g[2] * 0.0005);
       });
-      const lip = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 16, sy * 0.022, 6, false), lipMat);
-      group.add(lip);
+      group.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 18, sy * 0.015, 6, false), lipMat));
     }
     return group;
   }
 
   // ---------------------------------------------------------------- coat hooks
   // How far a head-local point is from the nearest eye and from the nose leather (negative when
-  // on them), and which way is away from that eye: face hair stops at the lids and the nose.
+  // on them), and which ways are away from them: face hair stops at the lids and the nose.
   faceClearance(P) {
     let eye = Infinity, away = [0, 0, 1], eyeR = 0.01;
     for (const e of this.eyeSpots) {
@@ -669,8 +723,9 @@ export class DogBody {
       }
     }
     const n = this.nosePos;
-    const nose = Math.hypot(P[0] - n.x, P[1] - n.y, P[2] - n.z) - this.noseR * 0.95;
-    return { eye, away, eyeR, nose };
+    const nd = Math.hypot(P[0] - n.x, P[1] - n.y, P[2] - n.z) || 1e-6;
+    const nose = nd - this.noseR * 0.95;
+    return { eye, away, eyeR, nose, noseAway: [(P[0] - n.x) / nd, (P[1] - n.y) / nd, (P[2] - n.z) / nd] };
   }
 
   // Move a guide strand's root (bone-local P, N) onto the skin.
@@ -688,6 +743,10 @@ export class DogBody {
     const w = [0, 1, 2].map((a) => F[o + a] + F[o + 3 + a] * P[0] + F[o + 6 + a] * P[1] + F[o + 9 + a] * lz);
     const g = [0, 0, 0];
     project(f, w, g);
+    if (ear) {
+      ear.clampToFlap(w);
+      project(f, w, g);
+    }
     const rel = [w[0] - F[o], w[1] - F[o + 1], w[2] - F[o + 2]];
     const dot = (k, v) => F[o + k] * v[0] + F[o + k + 1] * v[1] + F[o + k + 2] * v[2];
     return [
