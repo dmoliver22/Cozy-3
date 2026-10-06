@@ -109,11 +109,13 @@ export const BREEDS = {
     snout: { r: [0.056, 0.05, 0.062], at: [0, -0.035, 0.1] },
     face: { flews: 0.4, taper: 0.08 },
     eyes: { at: [0.045, 0.022, 0.09], r: 0.019 },
+    noseSize: 0.56,
     ears: { kind: 'floppy', at: [0.083, 0.045, -0.01], seg: 0.045, w: 0.05 },
     tail: { at: [0, 0.06, -0.27], segs: 2, seg: 0.04, dirs: [[0, 0.5, -1], [0, 0.3, -1]], stiff: 0.25, r: 0.035 },
     fur: {
-      segs: 5, len: 0.15, count: 1150, puff: 0.03, curl: 0.12, stiff: 0.13, stand: 0.18,
-      regions: { face: 0.4, headtop: 0.7, ears: 0.9, paws: 0.75, tail: 0.6, tailtip: 0.6 },
+      // A long, heavy coat that hangs straight down off the head, body and legs.
+      segs: 5, len: 0.15, count: 1150, puff: 0.03, curl: 0.12, stiff: 0.13, stand: 0.1, drape: 0.85,
+      regions: { face: 0.7, headtop: 0.95, ears: 1.0, paws: 0.75, tail: 0.6, tailtip: 0.6 },
       fringe: true,
     },
     dirt: 0.95,
@@ -231,32 +233,46 @@ export const BREEDS = {
     name: 'Golden Retriever',
     mass: 28,
     // A little longer than tall, with the chest reaching the elbows and good daylight under it.
-    torso: [0.14, 0.14, 0.28],
+    torso: [0.125, 0.14, 0.28],
     stand: 0.46,
-    hipF: [0.075, -0.08, 0.17],
-    hipB: [0.075, -0.07, -0.19],
+    hipF: [0.07, -0.08, 0.17],
+    hipB: [0.07, -0.07, -0.19],
     legR: 0.042,
     neck: [0, 0.065, 0.215],
     neckR: 0.065,
     // A broad skull and a strong, deep muzzle about as long as the skull, with soft flews.
-    head: { r: [0.079, 0.081, 0.088], at: [0, 0.175, 0.335] },
+    head: { r: [0.086, 0.076, 0.092], at: [0, 0.172, 0.335] },
     snout: { r: [0.046, 0.045, 0.076], at: [0, -0.034, 0.104] },
     face: { flews: 0.6, taper: 0.1 },
-    eyes: { at: [0.037, 0.021, 0.07], r: 0.0195, size: 0.7 },
-    ears: { kind: 'floppy', at: [0.071, 0.036, -0.008], seg: 0.05, w: 0.055 },
+    eyes: { at: [0.037, 0.024, 0.071], r: 0.0195, size: 0.7, color: '#2c180b', lid: [0.84, 0.42, 0.32] },
+    // Ears hang close beside the face.
+    ears: { kind: 'floppy', at: [0.076, 0.04, -0.01], seg: 0.055, w: 0.066, spread: 0.22 },
     tail: { at: [0, 0.065, -0.265], segs: 4, seg: 0.07, dirs: [[0, 0.2, -1], [0, -0.1, -1], [0, -0.3, -1], [0, -0.35, -1]], stiff: 0.2, r: 0.025 },
     // Long, wavy, glossy top coat that lies flat, with feathering on legs, belly, chest and tail.
     fur: {
       type: 'silky', segs: 5,
-      len: 0.08, count: 1500, puff: 0.027, curl: 0.2, waveStep: 1.25, stiff: 0.13, stand: 0.1, gloss: 0.9, feather: 1.2,
-      regions: { tail: 1.7, tailtip: 2.0, chest: 1.4, neck: 1.25, belly: 1.2, rear: 1.35, legs: 0.7, ears: 0.7, face: 0.13, headtop: 0.2, paws: 0.4 },
+      len: 0.065, count: 1500, puff: 0.027, curl: 0.2, waveStep: 1.25, stiff: 0.13, stand: 0.1, gloss: 0.9, feather: 1.4,
+      regions: { tail: 2.0, tailtip: 2.4, chest: 1.75, neck: 1.5, belly: 1.4, rear: 1.5, legs: 0.8, ears: 0.8, face: 0.16, headtop: 0.24, paws: 0.45 },
     },
     dirt: 0.9,
     mats: 4,
     bark: 0.85,
     cuts: ['tidy', 'feathers', 'feathers'],
     coat(part, P, region, rng) {
-      const gold = col('#bf7a33'), light = col('#d9a560'), deep = col('#9c5a24');
+      // A rich red-gold, much deeper than it looks in the sun.
+      const gold = col('#b5692a'), light = col('#d6a05a'), deep = col('#8c4a19');
+      // The face shades smoothly: paler round the muzzle and in soft patches over the eyes, deeper
+      // red over the skull. Short face fur hardly varies hair to hair.
+      const ss = THREE.MathUtils.smoothstep;
+      if (part === 'snout') return vary(mix(gold, light, 0.22), rng, 0.02);
+      if (part === 'head') {
+        const brow = ss(0.022, 0.006, Math.abs(Math.abs(P[0]) - 0.034)) * ss(0.018, 0.03, P[1]) * ss(0.06, 0.045, P[1]) * ss(0.03, 0.05, P[2]);
+        const cheek = ss(0.0, -0.035, P[1]) * ss(0.0, 0.04, P[2]);
+        const crown = Math.max(ss(0.03, 0.07, P[1]), ss(0.0, -0.04, P[2]));
+        let c = mix(gold, deep, 0.3 * crown);
+        c = mix(c, light, Math.max(0.4 * brow, 0.18 * cheek));
+        return vary(c, rng, 0.025);
+      }
       if ([R.chest, R.belly, R.tail, R.tailtip].includes(region)) return vary(mix(gold, light, 0.5 + rng() * 0.2), rng);
       if (region === R.legs || region === R.paws) return vary(mix(gold, light, 0.35), rng);
       if (region === R.ears) return vary(mix(gold, deep, 0.35), rng);
@@ -265,7 +281,7 @@ export const BREEDS = {
       return vary(gold, rng);
     },
     // Short hair over the muzzle and skull reads as smooth gold.
-    skin: '#c8893f',
+    skin: '#b06d30',
   },
   bichon: {
     name: 'Bichon Frise',

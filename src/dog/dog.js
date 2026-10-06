@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { RigidBody, orientationError } from '../core/rigid.js';
-import { Spring, Pendulum } from '../core/springs.js';
+import { Spring } from '../core/springs.js';
 import { clamp, lerp, mulberry32, smoothstep } from '../core/math.js';
 import { Fur, REGION, OPEN_GROUND } from './fur.js';
 import { HairView } from './hair.js';
@@ -197,7 +197,6 @@ class Colliders {
   }
 }
 
-const skinGeo = new THREE.SphereGeometry(1, 20, 14);
 
 export class Dog {
   constructor({ breedKey, seed = 1, cutKey, name = 'Dog', colorway }) {
@@ -257,7 +256,7 @@ export class Dog {
     const E = B.ears;
     const earDirs = (side) =>
       E.kind === 'floppy'
-        ? [[0.5 * side, -0.6, 0.15], [0.15 * side, -1, 0.05]]
+        ? [[(E.spread ?? 0.5) * side, -0.6, 0.15], [0.15 * side, -1, 0.05]]
         : [[0.35 * side, 1, -0.1], [0.2 * side, 1, -0.15]];
     const earStiff = E.stiff ?? (E.kind === 'floppy' ? 0.06 : 0.45);
     this.earL = new Chain(2, E.seg, [E.at[0], E.at[1], E.at[2]], earDirs(1), earStiff, 0.88, 1);
@@ -289,8 +288,11 @@ export class Dog {
     this.blink = new Spring(1, 400, 26);
     this.blinkTimer = 2;
     this.squint = 0;
+    // How much the dog is panting (0-1); the jaw and tongue follow it.
     this.tongue = new Spring(0, 60, 9);
-    this.tonguePend = new Pendulum(0.04, 3);
+    this.pantPhase = 0;
+    this.jawAngle = 0;
+    this.tongueOut = 0;
     this.shakeT = -1;
     this.shakeAmp = 0;
     this.extraTail = new THREE.Quaternion();
@@ -322,6 +324,8 @@ export class Dog {
     for (let j = 0; j < this.tail.n; j++) this.boneTail.push(add({ kind: 'seg', ref: 'torsoX' }));
     this.boneEarL = [add({ kind: 'seg', ref: 'headZ' }), add({ kind: 'seg', ref: 'headZ' })];
     this.boneEarR = [add({ kind: 'seg', ref: 'headZ' }), add({ kind: 'seg', ref: 'headZ' })];
+    // The lower jaw: the head's frame swung open about the hinge at the corners of the mouth.
+    this.boneJaw = add({ kind: 'rigid', body: 'jaw' });
     this.frames = new Float32Array(this.boneList.length * 13);
   }
 
@@ -481,6 +485,13 @@ export class Dog {
       d.len *= 0.35 + 0.65 * smoothstep(0, 2 * body.noseR, c.nose);
       const wn = 2 * (1 - smoothstep(0, 3 * body.noseR, c.nose));
       d.G = [d.G[0] + c.noseAway[0] * wn, d.G[1] + c.noseAway[1] * wn, d.G[2] + c.noseAway[2] * wn];
+      // The edges of the lips are bare, and fur near them is short (beards aside), so it doesn't
+      // hang across the mouth when it opens. Chin and lower-lip fur rides on the jaw.
+      const sy = B.snout.r[1];
+      const lip = body.lipDistance(d.P[0], d.P[1], d.P[2]);
+      if (lip < 0.1 * sy) return false;
+      if (!F.beard && !F.topknot) d.len *= 0.35 + 0.65 * smoothstep(0.1 * sy, 0.6 * sy, lip);
+      if (body.jawRegion(d.P[0], d.P[1], d.P[2]) < 0) d.bone = this.boneJaw;
       d.disc = Math.min(d.disc, Math.max(0.12, (c.nose + 0.003) / disc0));
       return true;
     };
@@ -590,7 +601,8 @@ export class Dog {
       bones.forEach((b, j) => {
         parts.push({
           name: 'ear', bone: b, kind: 'seg', radius: () => B.ears.w * 0.45,
-          count: cnt(earA),
+          // Floppy ears carry a thick fall of hair; give them more strands so it reads as one.
+          count: Math.round(cnt(earA) * (B.ears.kind === 'floppy' ? 1.6 : 1)),
           // Each clump's locks stay close around it, on the flap.
           disc: 0.55,
           region: () => REGION.ears,
@@ -619,11 +631,6 @@ export class Dog {
     // The head group follows the head's rigid body; the body adds the face to it in growFur().
     this.vHead = new THREE.Group();
     this.group.add(this.vHead);
-    const pink = new THREE.MeshStandardMaterial({ color: 0xe0707f, roughness: 0.4 });
-    this.vTongue = new THREE.Mesh(skinGeo, pink);
-    // Just inside the front of the mouth, under the nose.
-    this.tongueBase = new THREE.Vector3(0, B.snout.at[1] - B.snout.r[1] * 0.66, B.snout.at[2] + B.snout.r[2] * 0.85);
-    this.vHead.add(this.vTongue);
   }
 
   // ------------------------------------------------------------------
@@ -674,6 +681,24 @@ export class Dog {
       this._setFrameSeg(this.boneEarL[j], this.earL.p[j], this.earL.p[j + 1], hZ);
       this._setFrameSeg(this.boneEarR[j], this.earR.p[j], this.earR.p[j + 1], hZ);
     }
+    this._setFrameJaw();
+  }
+
+  // The jaw's frame is the head's, turned by jawAngle about the hinge (a line across the head).
+  _setFrameJaw() {
+    const F = this.frames, o = this.boneJaw * 13, H = this.head;
+    _m.makeRotationFromQuaternion(H.quat);
+    const e = _m.elements;
+    const th = this.jawAngle, c = Math.cos(th), s = Math.sin(th);
+    const hy = this.body ? this.body.hinge.y : 0, hz = this.body ? this.body.hinge.z : 0;
+    const oy = hy - (hy * c - hz * s), oz = hz - (hy * s + hz * c);
+    F[o] = H.pos.x + e[4] * oy + e[8] * oz;
+    F[o + 1] = H.pos.y + e[5] * oy + e[9] * oz;
+    F[o + 2] = H.pos.z + e[6] * oy + e[10] * oz;
+    F[o + 3] = e[0]; F[o + 4] = e[1]; F[o + 5] = e[2];
+    F[o + 6] = e[4] * c + e[8] * s; F[o + 7] = e[5] * c + e[9] * s; F[o + 8] = e[6] * c + e[10] * s;
+    F[o + 9] = -e[4] * s + e[8] * c; F[o + 10] = -e[5] * s + e[9] * c; F[o + 11] = -e[6] * s + e[10] * c;
+    F[o + 12] = 1;
   }
 
   _updateColliders() {
@@ -1047,9 +1072,15 @@ export class Dog {
     _eul.set(this.tailLift.value, this.wag, 0, 'YXZ');
     this.extraTail.setFromEuler(_eul);
 
-    // Tongue out when content.
-    this.tongue.target = happy > 0.7 && this.stress < 0.2 ? 1 : 0;
+    // A content dog lets its mouth fall open and pants with its tongue out; a worried one keeps
+    // it shut. (Not mid-shake.)
+    const relax = clamp((happy - 0.42) / 0.38, 0, 1) * clamp(1 - this.stress * 2.5, 0, 1);
+    this.tongue.target = this.shakeT >= 0 ? 0 : Math.max(relax, this.excited > 0 ? 1 : 0);
     this.tongue.update(dt);
+    const pant = clamp(this.tongue.value, 0, 1);
+    this.pantPhase += dt * (9 + 7 * pant);
+    this.jawAngle = pant * (this.B.face?.open ?? 0.34) * (0.84 + 0.16 * Math.sin(this.pantPhase));
+    this.tongueOut = smoothstep(0.3, 0.95, pant);
 
     // Blink every few seconds, squint under water or wind.
     this.blinkTimer -= dt;
@@ -1188,13 +1219,7 @@ export class Dog {
     // Eyes and tongue.
     const open = this.blink.value;
     this.body?.blink(open);
-    const tv = Math.max(0, this.tongue.value);
-    this.tonguePend.update(dt, this.head.vel.x * 0, 0);
-    this.vTongue.visible = tv > 0.05;
-    this.vTongue.position.copy(this.tongueBase).add(_a.set(0, -tv * 0.02, tv * 0.006));
-    this.vTongue.rotation.set(0.9 + this.tonguePend.ax * 0.5 + Math.sin(this.time * 9) * 0.1, 0, this.tonguePend.az * 0.5);
-    const tr = B.snout.r[0] * 0.5;
-    this.vTongue.scale.set(tr * tv, tr * 1.6 * tv, tr * 0.3 * tv);
+    this.body?.setMouth(this.jawAngle, this.tongueOut, this.pantPhase);
 
     // Skin darkens with mud and water.
     if (this.fur) {
@@ -1343,7 +1368,6 @@ export class Dog {
   dispose() {
     this.furView?.dispose();
     this.body?.dispose();
-    this.vTongue.material.dispose();
     this.group.removeFromParent();
   }
 }

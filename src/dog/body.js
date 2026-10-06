@@ -297,6 +297,32 @@ function noseGeometry() {
   return g;
 }
 
+// A dog's tongue: long, flat and soft, with a groove down the middle and a rounded tip. The
+// rings of vertices along it are placed every frame (see DogBody._shapeTongue).
+const TONGUE_N = 18, TONGUE_R = 10;
+function tongueGeometry() {
+  const g = new THREE.BufferGeometry();
+  const col = new Float32Array(TONGUE_N * TONGUE_R * 3);
+  const idx = [];
+  for (let i = 0; i < TONGUE_N - 1; i++)
+    for (let k = 0; k < TONGUE_R; k++) {
+      const a = i * TONGUE_R + k, b = i * TONGUE_R + ((k + 1) % TONGUE_R);
+      idx.push(a, a + TONGUE_R, b, b, a + TONGUE_R, b + TONGUE_R);
+    }
+  const top = new THREE.Color(0xc9616d), under = new THREE.Color(0xa64652), groove = new THREE.Color(0x96394a), c = new THREE.Color();
+  for (let i = 0; i < TONGUE_N; i++)
+    for (let k = 0; k < TONGUE_R; k++) {
+      const phi = (k / TONGUE_R) * Math.PI * 2;
+      if (Math.sin(phi) > 0) c.copy(top).lerp(groove, Math.pow(1 - Math.abs(Math.cos(phi)), 6));
+      else c.copy(under);
+      col.set([c.r, c.g, c.b], (i * TONGUE_R + k) * 3);
+    }
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TONGUE_N * TONGUE_R * 3), 3).setUsage(THREE.DynamicDrawUsage));
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  g.setIndex(idx);
+  return g;
+}
+
 // The deep chest and the rump, on top of the torso's barrel (torso-local centres and radii, and
 // how softly each blends in). The coat's colliders use them too, so hair rests on the real body.
 export function torsoBulges(B) {
@@ -436,12 +462,34 @@ export class DogBody {
       };
     });
     const k = re * 0.3;
-    this.headSdf = (x, y, z) => {
+    const full = (this.headSdf = (x, y, z) => {
       let d = base(x, y, z);
       for (const sk of sockets) d = smax(d, -sk(x, y, z), k);
       return d;
-    };
+    });
     this.headBase = base;
+
+    // The lower jaw: the part of the head below the mouth line, in front of the corners of the
+    // mouth and inside the width of the lower jaw (the upper lips hang down outside it). It swings
+    // open about a hinge across the head at the corners of the mouth, so the dog can pant.
+    const hinge = (this.hinge = new THREE.Vector3(0, cy - 0.62 * sy, cz - 0.55 * sz));
+    const slope = (-0.12 * sy) / sz, nl = Math.hypot(1, slope);
+    const wJ = 0.66 * sx * (1 - 0.4 * taper) * 1.08;
+    const floorY = (z) => hinge.y + slope * (z - hinge.z);
+    // Signed distance (roughly) to the mouth opening: below the mouth line and inside the jaw.
+    const mouth = (x, y, z) => Math.max((y - floorY(z)) / nl, Math.abs(x) - wJ);
+    const region = (x, y, z) => Math.max(mouth(x, y, z), hinge.z - z);
+    this.jawRegion = region;
+    this.upperSdf = (x, y, z) => Math.max(full(x, y, z), -region(x, y, z));
+    this.jawSdf = (x, y, z) => Math.max(full(x, y, z), region(x, y, z));
+    // How far a point on the skin is from the edge of the lips (large away from the mouth).
+    this.lipDistance = (x, y, z) => (z < hinge.z - 0.1 * sz ? Infinity : Math.abs(mouth(x, y, z)));
+    // Front of the lower jaw and of the upper lip along the mouth line.
+    const frontOf = (f, dy) => {
+      for (let z = cz + 1.6 * sz; z > hinge.z; z -= 0.004 * sz) if (f(0, floorY(z) + dy, z) < 0) return z;
+      return cz;
+    };
+    this.mouthSpec = { floorY, wJ, slope, jawFront: frontOf(this.jawSdf, -0.06 * sy), upperFront: frontOf(this.upperSdf, 0.06 * sy) };
   }
 
   // Ears: thin leaf-shaped flaps (floppy) or pointed triangles (upright) along their chains.
@@ -571,21 +619,24 @@ export class DogBody {
     const [sx, sy, sz] = B.snout.r;
     const [, cy, cz] = B.snout.at;
     const m = 0.02;
-    const min = [-hx - m, Math.min(-hy, cy - sy * 1.3) - m, -hz - m];
+    const min = [-hx - m, Math.min(-hy, cy - sy * 1.6) - m, -hz - m];
     const max = [hx + m, Math.max(hy, cy + sy) + m, Math.max(hz, cz + sz) + m];
-    const h = Math.min(hx, hy, sx * 2) / 14;
-    const { pos, idx } = surfaceNets(this.headSdf, min, max, h);
-    const V = pos.length / 3;
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(V * 3).fill(0.6), 3));
-    geo.setIndex(idx);
-    geo.computeVertexNormals();
+    const h = (this.headCell = Math.min(hx, hy, sx * 2) / 14);
     this.headMat = this.skinMat.clone();
-    const mesh = new THREE.Mesh(geo, this.headMat);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    return mesh;
+    const build = (sdf) => {
+      const { pos, idx } = surfaceNets(sdf, min, max, h);
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(pos.length).fill(0.6), 3));
+      geo.setIndex(idx);
+      geo.computeVertexNormals();
+      const mesh = new THREE.Mesh(geo, this.headMat);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      return mesh;
+    };
+    this.jawMesh = build(this.jawSdf);
+    return build(this.upperSdf);
   }
 
   _meshEars() {
@@ -640,7 +691,7 @@ export class DogBody {
     // an almond with a dark margin. The upper lid swings down to blink.
     // A wet, dark eye: the cornea mirrors the room only faintly, so the eye stays dark instead of
     // turning into a silvery bead.
-    const eyeMat = new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.5, clearcoat: 0.7, clearcoatRoughness: 0.06, envMapIntensity: 0.35 });
+    const eyeMat = new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.55, clearcoat: 0.5, clearcoatRoughness: 0.08, envMapIntensity: 0.25 });
     const glint = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7 });
     this.lidMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.75, side: THREE.DoubleSide });
     const iris = new THREE.Color(B.eyes.color ?? '#3f2512');
@@ -686,25 +737,43 @@ export class DogBody {
     group.add(nose);
     this.nosePos = nose.position.clone();
 
-    // Mouth: a dark lip line along the bottom edge of the upper lips, back to the corners of the
-    // mouth. Under the nose it runs along the underside, where it is seen from below rather than
-    // drawn across the front of the face.
-    const lipMat = new THREE.MeshStandardMaterial({ color: 0x33241f, roughness: 0.6 });
-    const fl = this.lipShape.flews;
+    // The lower jaw hangs from a pivot at the hinge, so it can swing open.
+    const H = this.hinge, M = this.mouthSpec;
+    this.jawPivot = new THREE.Group();
+    this.jawPivot.position.copy(H);
+    this.jawContent = new THREE.Group();
+    this.jawContent.position.copy(H).negate();
+    this.jawPivot.add(this.jawContent);
+    this.jawContent.add(this.jawMesh);
+    group.add(this.jawPivot);
+
+    // Teeth: a canine on each side of each jaw, just inside the lips.
+    const toothMat = new THREE.MeshStandardMaterial({ color: 0xebe2cc, roughness: 0.4 });
+    const cone = new THREE.ConeGeometry(1, 1, 7);
+    const tooth = (parent, geo, x, z, r, len, up) => {
+      const t = new THREE.Mesh(geo, toothMat);
+      t.scale.set(r, len, r);
+      const y = M.floorY(z);
+      t.position.set(x, up ? y + len * 0.35 : y - len * 0.35, z);
+      if (!up) t.rotation.x = Math.PI;
+      parent.add(t);
+    };
+    // Only the canines show past the lips; the small front teeth sit behind them.
+    const wJ = M.wJ;
     for (const s of [1, -1]) {
-      const pts = [
-        [0, cy - sy * 1.15, cz + sz * 0.82],
-        [s * sx * 0.34, cy - sy * (1.15 + 0.25 * fl), cz + sz * 0.72],
-        [s * sx * 0.6, cy - sy * (1.05 + 0.4 * fl), cz + sz * 0.4],
-        [s * sx * 0.7, cy - sy * (0.88 + 0.3 * fl), cz - sz * 0.05],
-        [s * sx * 0.72, cy - sy * 0.64, cz - sz * 0.42],
-      ].map((q) => {
-        const g = [0, 0, 0];
-        project(f, q, g);
-        return new THREE.Vector3(q[0] + g[0] * 0.0005, q[1] + g[1] * 0.0005, q[2] + g[2] * 0.0005);
-      });
-      group.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 18, sy * 0.015, 6, false), lipMat));
+      tooth(group, cone, s * 0.74 * wJ, M.upperFront - 0.45 * sz, 0.05 * sy, 0.2 * sy, false);
+      tooth(this.jawContent, cone, s * 0.66 * wJ, M.jawFront - 0.3 * sz, 0.045 * sy, 0.15 * sy, true);
     }
+
+    // The tongue lies on the floor of the mouth and slides out over the lower teeth to pant.
+    this.tongueGeo = tongueGeometry();
+    this.tongueMat = new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.42, clearcoat: 0.5, clearcoatRoughness: 0.25, side: THREE.DoubleSide });
+    this.tongue = new THREE.Mesh(this.tongueGeo, this.tongueMat);
+    this.tongue.frustumCulled = false;
+    this.tongue.visible = false;
+    this.jawContent.add(this.tongue);
+    const back = H.z + 0.3 * (M.jawFront - H.z);
+    this.tongueSpec = { back, front: M.jawFront, hw: 0.68 * wJ, th: 0.22 * sy, out: 0.62 * sz, rc: 0.3 * sy };
     return group;
   }
 
@@ -797,7 +866,8 @@ export class DogBody {
     }
     // How far the short fur leans over along the coat (1 = lies flat, 0 = stands straight up).
     const combK = { silky: 1, fluffy: 0.7, curly: 0.35, wiry: 0.65, double: 0.75 }[fur.type] ?? 0.7;
-    const paint = (geo, toWorld = null, clear = null, rim = null) => {
+    // skin(v, normal) may override a vertex (mesh space): { col, w } blends to a bare-skin colour.
+    const paint = (geo, toWorld = null, clear = null, rim = null, skin = null) => {
       const p = geo.attributes.position, c = geo.attributes.color, nrm = geo.attributes.normal;
       const len = new Float32Array(p.count), cmb = new Float32Array(p.count * 3);
       const v = new THREE.Vector3(), n = new THREE.Vector3(), g = new THREE.Vector3();
@@ -805,6 +875,7 @@ export class DogBody {
       for (let i = 0; i < p.count; i++) {
         v.fromBufferAttribute(p, i);
         const k0 = clear ? clear(v) : 1;
+        const bare = skin ? skin(v, n.fromBufferAttribute(nrm, i)) : null;
         if (toWorld) v.applyMatrix4(toWorld);
         const s = nearest(v.x, v.y, v.z);
         // The skin shows the bottom of the pile: a deep, shadowed shade of the coat.
@@ -821,6 +892,11 @@ export class DogBody {
         n.fromBufferAttribute(nrm, i);
         g.addScaledVector(n, -g.dot(n)).normalize().multiplyScalar(combK);
         cmb.set([g.x, g.y, g.z], i * 3);
+        if (bare) {
+          const w = bare.w;
+          c.setXYZ(i, c.getX(i) + (bare.col.r - c.getX(i)) * w, c.getY(i) + (bare.col.g - c.getY(i)) * w, c.getZ(i) + (bare.col.b - c.getZ(i)) * w);
+          len[i] *= 1 - w;
+        }
       }
       c.needsUpdate = true;
       geo.setAttribute('aFurLen', new THREE.BufferAttribute(len, 1));
@@ -842,7 +918,27 @@ export class DogBody {
       for (const e of this.eyeSpots) k *= smooth01((v.distanceTo(e.c) - e.re * 1.05) / (e.re * 0.35));
       return k;
     };
-    paint(this.headMesh.geometry, headToWorld, faceClear, eyeRim);
+    // Inside the mouth: a ridged pink palate, a dark floor under the tongue and dark gums along the
+    // inside of the lips; the lips themselves are bare black skin at their edges.
+    const hc = this.headCell, sy = this.dog.B.snout.r[1];
+    const palate = new THREE.Color(0x4f2229), palateRidge = new THREE.Color(0x63303a), floor = new THREE.Color(0x35181c);
+    const gum = new THREE.Color(0x2a1719), lipBlack = new THREE.Color(0x151010), tmp = new THREE.Color();
+    const mouthSkin = (upper) => (v, nn) => {
+      const inner = smooth01((-this.headSdf(v.x, v.y, v.z) - 0.3 * hc) / (0.8 * hc));
+      if (inner > 0) {
+        const flat = Math.abs(nn.y) > 0.6;
+        if (!flat) tmp.copy(gum);
+        else if (upper) tmp.copy(palate).lerp(palateRidge, 0.5 + 0.5 * Math.sin(v.z * 900));
+        else tmp.copy(floor);
+        return { col: tmp, w: inner };
+      }
+      const lip = 1 - smooth01((this.lipDistance(v.x, v.y, v.z) - 0.08 * sy) / (0.14 * sy));
+      return lip > 0 ? { col: lipBlack, w: lip * 0.92 } : null;
+    };
+    // Face fur lies close: a thinner pile than the body's, so the face stays sleek.
+    const faceFur = (v) => 0.65 * faceClear(v);
+    paint(this.headMesh.geometry, headToWorld, faceFur, eyeRim, mouthSkin(true));
+    paint(this.jawMesh.geometry, headToWorld, faceFur, eyeRim, mouthSkin(false));
 
     // The lids take a dark shade of the fur around the eyes (their vertex colours hold the margin).
     this.eyes.forEach((e, i) => {
@@ -853,7 +949,7 @@ export class DogBody {
         const col = lid.geometry.attributes.color;
         for (let i = 0; i < col.count; i++) {
           const m = col.getX(i);
-          col.setXYZ(i, fur.color[s * 3] * m * 0.5, fur.color[s * 3 + 1] * m * 0.5, fur.color[s * 3 + 2] * m * 0.5);
+          col.setXYZ(i, fur.color[s * 3] * m * 0.32, fur.color[s * 3 + 1] * m * 0.32, fur.color[s * 3 + 2] * m * 0.32);
         }
         col.needsUpdate = true;
       }
@@ -864,15 +960,77 @@ export class DogBody {
     this.shellU = shellUniforms(0.0015 * clamp(B.stand / 0.4, 0.8, 1.2));
     const body = [...addShells(this.mesh, this.shellU), ...addShells(this.earMesh, this.shellU)];
     const head = addShells(this.headMesh, this.shellU);
+    const jaw = addShells(this.jawMesh, this.shellU);
     this.dog.group.add(...body);
     this.face.add(...head);
-    this.shells = [...body, ...head];
+    this.jawContent.add(...jaw);
+    this.shells = [...body, ...head, ...jaw];
   }
 
   // ---------------------------------------------------------------- per frame
   // open: 1 wide open, 0 shut. The upper lid swings down over the eye.
   blink(open) {
     for (const e of this.eyes) e.upper.rotation.x = (1 - open) * 0.75;
+  }
+
+  // open: how far the lower jaw swings down (radians); out: how far the tongue hangs out (0-1);
+  // phase drives the bob of a panting tongue.
+  setMouth(open, out, phase) {
+    if (!this.jawPivot) return;
+    this.jawPivot.rotation.x = open;
+    const show = open > 0.02;
+    this.tongue.visible = show;
+    if (!show) return;
+    const key = `${open.toFixed(3)}|${out.toFixed(3)}|${phase.toFixed(2)}`;
+    if (key === this._tongueKey) return;
+    this._tongueKey = key;
+    this._shapeTongue(out, phase);
+  }
+
+  // The tongue's centre line runs forward along the floor of the mouth, curls over the lower
+  // teeth and hangs down and a little forward, bobbing as the dog pants. Rings of vertices are
+  // placed along it: a flattened oval with a groove along the top and a rounded tip.
+  _shapeTongue(out, phase) {
+    const T = this.tongueSpec, M = this.mouthSpec;
+    const pos = this.tongueGeo.attributes.position;
+    const inside = T.front - T.back, total = inside + out * T.out;
+    const lean = 0.62 + 0.1 * Math.sin(phase);
+    const aMax = Math.PI / 2 - lean;
+    const yLip = M.floorY(T.front) + 0.4 * T.th;
+    const centre = (s, P, D) => {
+      if (s <= inside) {
+        const z = T.back + s;
+        P.set(0, M.floorY(z) + 0.4 * T.th, z);
+        D.set(0, M.slope, 1).normalize();
+        return;
+      }
+      const s2 = s - inside, arc = T.rc * aMax;
+      const a = Math.min(s2 / T.rc, aMax);
+      P.set(0, yLip - T.rc + T.rc * Math.cos(a), T.front + T.rc * Math.sin(a));
+      D.set(0, -Math.sin(a), Math.cos(a));
+      if (s2 > arc) P.addScaledVector(D, s2 - arc);
+    };
+    const P = new THREE.Vector3(), D = new THREE.Vector3(), X = new THREE.Vector3(1, 0, 0), Bn = new THREE.Vector3();
+    for (let i = 0; i < TONGUE_N; i++) {
+      const s = (i / (TONGUE_N - 1)) * total;
+      centre(s, P, D);
+      Bn.crossVectors(D, X);
+      const u = s / Math.max(1e-6, total);
+      let hw = T.hw * (0.72 + 0.28 * Math.min(1, u * 1.6));
+      // A rounded tip.
+      const tip = total - s;
+      if (tip < hw) hw *= Math.sqrt(Math.max(0, 1 - ((hw - tip) / hw) ** 2));
+      const th = T.th * (1 - 0.45 * u);
+      for (let k = 0; k < TONGUE_R; k++) {
+        const phi = (k / TONGUE_R) * Math.PI * 2;
+        const cx = Math.cos(phi), sn = Math.sin(phi);
+        let n = th * 0.5 * sn;
+        if (sn > 0) n -= th * 0.35 * Math.pow(1 - Math.abs(cx), 4);
+        pos.setXYZ(i * TONGUE_R + k, P.x + X.x * hw * cx + Bn.x * n, P.y + Bn.y * n, P.z + Bn.z * n);
+      }
+    }
+    pos.needsUpdate = true;
+    this.tongueGeo.computeVertexNormals();
   }
 
   update() {
@@ -901,14 +1059,14 @@ export class DogBody {
   }
 
   dispose() {
-    for (const m of [this.mesh, this.earMesh, this.headMesh]) m.geometry.dispose();
+    for (const m of [this.mesh, this.earMesh, this.headMesh, this.jawMesh]) m.geometry.dispose();
     for (const m of [this.skinMat, this.earMat, this.headMat]) m.dispose();
     for (const l of this.shells ?? []) {
       l.material.dispose();
       l.removeFromParent();
     }
     this.face.traverse((o) => {
-      if (o.isMesh && o !== this.headMesh && !this.shells?.includes(o)) {
+      if (o.isMesh && o !== this.headMesh && o !== this.jawMesh && !this.shells?.includes(o)) {
         o.geometry.dispose();
         o.material.dispose?.();
       }
